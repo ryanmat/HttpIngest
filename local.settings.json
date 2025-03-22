@@ -1,0 +1,8 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "POSTGRES_CONN_STR": "host=rm-postgres.postgres.database.azure.com dbname=postgres user=admin_pg password=rmCta12345!"
+  }
+}
