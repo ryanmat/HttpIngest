@@ -1,0 +1,188 @@
+trigger:
+  branches:
+    include:
+    - main
+    - feature/production-redesign
+
+variables:
+  azureServiceConnection: 'Azure-CTA-Connection'
+  acrName: 'acrctalmhttps001'
+  containerRegistry: 'acrctalmhttps001.azurecr.io'
+  imageRepository: 'lm-http-ingest'
+  containerAppName: 'ca-cta-lm-ingest'
+  resourceGroup: 'CTA_Resource_Group'
+  containerAppEnvironment: 'cae-cta-lm-ingest'
+  tag: '$(Build.BuildId)'
+  
+  # PostgreSQL settings
+  pgHost: 'rm-postgres.postgres.database.azure.com'
+  pgDatabase: 'postgres'
+  pgUser: 'ryan.matuszewski@logicmonitor.com'
+
+stages:
+- stage: Build
+  displayName: 'Build and Push Docker Image'
+  jobs:
+  - job: Build
+    displayName: 'Build Job'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    - checkout: self
+      
+    - task: Docker@2
+      displayName: 'Build Docker Image'
+      inputs:
+        command: 'build'
+        Dockerfile: '$(System.DefaultWorkingDirectory)/Dockerfile'
+        tags: |
+          $(tag)
+          latest-$(Build.SourceBranchName)
+        repository: $(imageRepository)
+    
+    - task: AzureCLI@2
+      displayName: 'Login to ACR and Push Image'
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          az acr login --name $(acrName)
+          docker tag $(imageRepository):$(tag) $(containerRegistry)/$(imageRepository):$(tag)
+          docker tag $(imageRepository):$(tag) $(containerRegistry)/$(imageRepository):latest-$(Build.SourceBranchName)
+          docker push $(containerRegistry)/$(imageRepository):$(tag)
+          docker push $(containerRegistry)/$(imageRepository):latest-$(Build.SourceBranchName)
+
+- stage: Deploy
+  displayName: 'Deploy to Container Apps'
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - job: Deploy
+    displayName: 'Deploy Job'
+    pool:
+      vmImage: 'ubuntu-latest'
+    
+    steps:
+    - task: AzureCLI@2
+      displayName: 'Deploy to Container Apps'
+      inputs:
+        azureSubscription: $(azureServiceConnection)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Get ACR credentials
+          ACR_USERNAME=$(az acr credential show -n $(acrName) --query username -o tsv)
+          ACR_PASSWORD=$(az acr credential show -n $(acrName) --query passwords[0].value -o tsv)
+          
+          # Set deployment mode based on branch
+          if [[ "$(Build.SourceBranch)" == "refs/heads/feature/production-redesign" ]]; then
+            echo "Deploying production redesign with new schema enabled"
+            LEGACY_MODE="false"
+            ENABLE_PROCESSING="true"
+            USE_AZURE_AD="true"
+            ENABLE_NEW_SCHEMA="true"
+          else
+            echo "Deploying legacy mode (main branch)"
+            LEGACY_MODE="true"
+            ENABLE_PROCESSING="false"
+            USE_AZURE_AD="false"  # Use connection string for main branch
+            ENABLE_NEW_SCHEMA="false"
+          fi
+          
+          # Check if app exists
+          if az containerapp show -n $(containerAppName) -g $(resourceGroup) &>/dev/null; then
+            echo "Updating existing container app..."
+            az containerapp update \
+              --name $(containerAppName) \
+              --resource-group $(resourceGroup) \
+              --image $(containerRegistry)/$(imageRepository):$(tag) \
+              --set-env-vars \
+                USE_AZURE_AD_AUTH=$USE_AZURE_AD \
+                PGHOST=$(pgHost) \
+                PGDATABASE=$(pgDatabase) \
+                PGUSER=$(pgUser) \
+                LEGACY_MODE=$LEGACY_MODE \
+                ENABLE_PROCESSING=$ENABLE_PROCESSING \
+                ENABLE_NEW_SCHEMA=$ENABLE_NEW_SCHEMA \
+                POSTGRES_CONN_STR=secretref:postgres-conn
+          else
+            echo "Creating new container app..."
+            # Create secrets first
+            az containerapp create \
+              --name $(containerAppName) \
+              --resource-group $(resourceGroup) \
+              --environment $(containerAppEnvironment) \
+              --image $(containerRegistry)/$(imageRepository):$(tag) \
+              --registry-server $(containerRegistry) \
+              --registry-username $ACR_USERNAME \
+              --registry-password $ACR_PASSWORD \
+              --target-port 80 \
+              --ingress external \
+              --min-replicas 1 \
+              --max-replicas 10 \
+              --cpu 0.5 \
+              --memory 1.0Gi \
+              --secrets \
+                postgres-conn="${POSTGRES_CONN_STR}" \
+              --env-vars \
+                USE_AZURE_AD_AUTH=$USE_AZURE_AD \
+                PGHOST=$(pgHost) \
+                PGDATABASE=$(pgDatabase) \
+                PGUSER=$(pgUser) \
+                LEGACY_MODE=$LEGACY_MODE \
+                ENABLE_PROCESSING=$ENABLE_PROCESSING \
+                ENABLE_NEW_SCHEMA=$ENABLE_NEW_SCHEMA \
+                POSTGRES_CONN_STR=secretref:postgres-conn \
+              --system-assigned
+          fi
+          
+          # Grant Container App access to PostgreSQL (if using Azure AD)
+          if [[ "$USE_AZURE_AD" == "true" ]]; then
+            CONTAINER_APP_IDENTITY=$(az containerapp identity show \
+              --name $(containerAppName) \
+              --resource-group $(resourceGroup) \
+              --query principalId -o tsv)
+            
+            echo "Container App Managed Identity: $CONTAINER_APP_IDENTITY"
+            echo "Note: You need to grant this identity access to PostgreSQL"
+            echo "Run in PostgreSQL: CREATE USER \"$CONTAINER_APP_IDENTITY\" WITH LOGIN;"
+          fi
+          
+          # Get the FQDN
+          FQDN=$(az containerapp show \
+            --name $(containerAppName) \
+            --resource-group $(resourceGroup) \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          
+          echo "##vso[task.setvariable variable=APP_URL]https://$FQDN"
+          echo "=========================================="
+          echo "Application deployed to: https://$FQDN"
+          echo "Endpoints:"
+          echo "  - Original: https://$FQDN/api/HttpIngest"
+          echo "  - Health:   https://$FQDN/api/health"
+          echo "  - Metrics:  https://$FQDN/api/metrics"
+          echo "=========================================="
+    
+    - task: Bash@3
+      displayName: 'Test Health Endpoint'
+      inputs:
+        targetType: 'inline'
+        script: |
+          sleep 30  # Wait for app to start
+          
+          echo "Testing health endpoint..."
+          HEALTH_URL="$(APP_URL)/api/health"
+          echo "URL: $HEALTH_URL"
+          
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" $HEALTH_URL)
+          
+          if [ $RESPONSE -eq 200 ]; then
+            echo "Health check passed!"
+            curl -s $HEALTH_URL | python -m json.tool
+          else
+            echo "Health check failed with status: $RESPONSE"
+            curl -s $HEALTH_URL
+            exit 1
+          fi
