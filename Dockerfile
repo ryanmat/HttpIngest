@@ -24,7 +24,9 @@ RUN apt-get update && apt-get install -y \
 
 ENV AzureWebJobsScriptRoot=/home/site/wwwroot \
     AzureFunctionsJobHost__Logging__Console__IsEnabled=true \
-    FUNCTIONS_WORKER_RUNTIME=python
+    FUNCTIONS_WORKER_RUNTIME=python \
+    FUNCTIONS_CUSTOMHANDLER_PORT=8080 \
+    ASPNETCORE_URLS=http://+:8080
 
 # Copy Python packages from builder
 COPY --from=builder /root/.local /usr/local
@@ -32,10 +34,5 @@ COPY --from=builder /root/.local /usr/local
 # Copy function code
 COPY src/ /home/site/wwwroot/
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /home/site/wwwroot
-
-USER appuser
-
-EXPOSE 80
+# Expose port 8080 instead of 80
+EXPOSE 8080
