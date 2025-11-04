@@ -36,10 +36,14 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 # Copy function code
 COPY src/ /home/site/wwwroot/
 
-# Create non-root user for security
-RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /home/site/wwwroot
+# Install requirements again to ensure Azure Functions finds them
+WORKDIR /home/site/wwwroot
+RUN pip install --no-cache-dir -r requirements.txt
 
-USER appuser
+# REMOVED: User creation and USER directive - Azure Functions needs root
+# RUN useradd -m -u 1000 appuser && \
+#     chown -R appuser:appuser /home/site/wwwroot
+# USER appuser
 
-EXPOSE 80
+# Expose the correct port
+EXPOSE 8080
