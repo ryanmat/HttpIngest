@@ -1,3 +1,29 @@
+## Current Project: LogicMonitor Data Pipeline
+
+### CRITICAL PRODUCTION WARNINGS
+- **LIVE SYSTEM**: Currently receiving real LogicMonitor data
+- **DO NOT**: Modify existing lm_metrics table
+- **DO NOT**: Break /api/health or /api/HttpIngest endpoints
+- **Current Version**: v10 in production
+
+### Database Connection
+```python
+# Azure PostgreSQL 17.5
+host = 'rm-postgres.postgres.database.azure.com'
+database = 'postgres'
+user = 'ryan.matuszewski@logicmonitor.com'
+# Azure AD token auth (expires 90 min)
+```
+
+### Working Endpoints
+- https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health
+- https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/HttpIngest
+
+### Implementation Files
+- Prompts: See "Implementation Prompts for Claude Code" artifact
+- Plan: plan.md
+- Progress: todo.md
+
 # Interaction
 
 - Any time you interact with me, you MUST address me as "Ryan"
