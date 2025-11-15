@@ -152,16 +152,20 @@ def compute_resource_hash(attributes: Dict[str, Any]) -> str:
     return hashlib.sha256(attr_str.encode()).hexdigest()
 
 
-def convert_nano_timestamp(time_unix_nano: int) -> datetime:
+def convert_nano_timestamp(time_unix_nano) -> datetime:
     """
     Convert OTLP nanosecond timestamp to Python datetime.
 
     Args:
-        time_unix_nano: Unix timestamp in nanoseconds
+        time_unix_nano: Unix timestamp in nanoseconds (int or str)
 
     Returns:
         Timezone-aware datetime object (UTC)
     """
+    # LogicMonitor sends timestamps as strings, so convert if needed
+    if isinstance(time_unix_nano, str):
+        time_unix_nano = int(time_unix_nano)
+
     # Convert nanoseconds to seconds (divide by 1e9)
     timestamp_seconds = time_unix_nano / 1e9
     return datetime.fromtimestamp(timestamp_seconds, tz=timezone.utc)
@@ -192,8 +196,14 @@ def parse_data_point(
     timestamp = convert_nano_timestamp(time_unix_nano)
 
     # Extract value (either asDouble or asInt)
+    # LogicMonitor may send these as strings or numbers
     value_double = data_point.get('asDouble')
+    if value_double is not None and isinstance(value_double, str):
+        value_double = float(value_double)
+
     value_int = data_point.get('asInt')
+    if value_int is not None and isinstance(value_int, str):
+        value_int = int(value_int)
 
     # Extract additional attributes if present
     attributes = None

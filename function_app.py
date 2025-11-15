@@ -167,32 +167,37 @@ async def data_processing_loop():
     """
     logger.info("📊 Data processor started")
 
+    # Import DataProcessor here to avoid circular imports
+    from src.data_processor import DataProcessor
+
     while not shutdown_event.is_set():
         try:
-            # Query for unprocessed data
+            # Get database connection
             conn_str = get_db_connection_string()
             conn = psycopg2.connect(conn_str)
 
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                # Check for new data (placeholder - would integrate with your processor)
-                cur.execute("""
-                    SELECT COUNT(*) as unprocessed
-                    FROM lm_metrics
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM processing_status ps
-                        WHERE ps.source_id = lm_metrics.id
-                    )
-                """)
-                result = cur.fetchone()
+            # Create processor and process batch
+            processor = DataProcessor(conn)
+            stats = processor.process_batch(limit=100)
 
-                if result and result['unprocessed'] > 0:
-                    logger.info(f"Processing {result['unprocessed']} new metrics...")
-                    # Would call your OTLP processor here
+            if stats.successful > 0:
+                logger.info(
+                    f"✅ Processed {stats.successful} records: "
+                    f"{stats.resources_created} resources, "
+                    f"{stats.datasources_created} datasources, "
+                    f"{stats.metric_definitions_created} metric definitions, "
+                    f"{stats.metric_data_created} data points"
+                )
+
+            if stats.failed > 0:
+                logger.warning(f"⚠️  {stats.failed} records failed processing")
+                for error in stats.errors[:5]:  # Log first 5 errors
+                    logger.warning(f"  {error}")
 
             conn.close()
 
         except Exception as e:
-            logger.error(f"Error in data processor: {e}")
+            logger.error(f"Error in data processor: {e}", exc_info=True)
 
         # Wait before next check
         await asyncio.sleep(30)  # Check every 30 seconds
@@ -319,13 +324,13 @@ def http_ingest(req: func.HttpRequest) -> func.HttpResponse:
 
         # Insert into lm_metrics table
         insert_query = """
-            INSERT INTO lm_metrics (received_at, raw_payload, content_encoding)
-            VALUES (NOW(), %s, %s)
+            INSERT INTO lm_metrics (payload)
+            VALUES (%s)
             RETURNING id
         """
         cursor.execute(
             insert_query,
-            (json.dumps(req_body), req.headers.get("Content-Encoding", "none"))
+            (json.dumps(req_body),)
         )
         inserted_id = cursor.fetchone()[0]
         conn.commit()
