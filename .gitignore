@@ -132,3 +132,12 @@ __blobstorage__
 __queuestorage__
 __azurite_db*__.json
 .python_packages
+
+# Claude Code - User-specific configuration
+.claude/
+CLAUDE.md
+claude.md
+
+# macOS
+.DS_Store
+**/.DS_Store
