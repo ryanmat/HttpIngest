@@ -66,13 +66,14 @@ def get_db_connection_string() -> str:
     conn_str = os.getenv("POSTGRES_CONN_STR")
     if not conn_str:
         # Fallback to individual components
+        # Use psycopg2 parameter format instead of URL to avoid special character issues
         host = os.getenv("POSTGRES_HOST", "localhost")
         port = os.getenv("POSTGRES_PORT", "5432")
         db = os.getenv("POSTGRES_DB", "postgres")
         user = os.getenv("POSTGRES_USER", "postgres")
         password = os.getenv("POSTGRES_PASSWORD", "")
 
-        conn_str = f"postgresql://{user}:{password}@{host}:{port}/{db}"
+        conn_str = f"host={host} port={port} dbname={db} user={user} password={password} sslmode=require"
 
     return conn_str
 
