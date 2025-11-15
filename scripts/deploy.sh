@@ -89,20 +89,49 @@ fi
 
 print_status "Container app updated successfully"
 
-# Step 4: Health check
-print_status "Step 4/4: Running health check..."
-sleep 5  # Wait for container to start
+# Step 4: Health checks
+print_status "Step 4/4: Running health checks..."
+sleep 15  # Wait for container to start and initialize all services
 
-HEALTH_URL="https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health"
-print_status "Checking health endpoint: ${HEALTH_URL}"
+BASE_URL="https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io"
 
-HEALTH_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${HEALTH_URL}")
+# Check FastAPI health endpoint
+print_status "Checking FastAPI health endpoint..."
+FASTAPI_HEALTH_URL="${BASE_URL}/api/health"
+FASTAPI_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${FASTAPI_HEALTH_URL}")
 
-if [ "$HEALTH_RESPONSE" == "200" ]; then
-    print_status "✓ Health check passed (HTTP ${HEALTH_RESPONSE})"
+if [ "$FASTAPI_RESPONSE" == "200" ]; then
+    print_status "✓ FastAPI health check passed (HTTP ${FASTAPI_RESPONSE})"
 else
-    print_warning "⚠ Health check returned HTTP ${HEALTH_RESPONSE}"
+    print_warning "⚠ FastAPI health check returned HTTP ${FASTAPI_RESPONSE}"
 fi
+
+# Check Azure Functions health endpoint
+print_status "Checking Azure Functions health endpoint..."
+AF_HEALTH_URL="${BASE_URL}/api/health"
+AF_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${AF_HEALTH_URL}")
+
+if [ "$AF_RESPONSE" == "200" ]; then
+    print_status "✓ Azure Functions health check passed (HTTP ${AF_RESPONSE})"
+else
+    print_warning "⚠ Azure Functions health check returned HTTP ${AF_RESPONSE}"
+fi
+
+# Check Prometheus metrics endpoint
+print_status "Checking Prometheus metrics endpoint..."
+METRICS_URL="${BASE_URL}/metrics/prometheus"
+METRICS_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "${METRICS_URL}")
+
+if [ "$METRICS_RESPONSE" == "200" ]; then
+    print_status "✓ Metrics endpoint available (HTTP ${METRICS_RESPONSE})"
+else
+    print_warning "⚠ Metrics endpoint returned HTTP ${METRICS_RESPONSE}"
+fi
+
+# Get detailed health status
+print_status "Fetching detailed health status..."
+HEALTH_DETAILS=$(curl -s "${FASTAPI_HEALTH_URL}")
+echo "$HEALTH_DETAILS" | python3 -m json.tool 2>/dev/null || echo "$HEALTH_DETAILS"
 
 # Summary
 echo ""

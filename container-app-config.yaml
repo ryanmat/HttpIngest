@@ -11,17 +11,29 @@ properties:
     dapr: null
     identitySettings: []
     ingress:
-      additionalPortMappings: null
+      additionalPortMappings:
+      - external: true
+        targetPort: 7071
       allowInsecure: false
       clientCertificateMode: null
-      corsPolicy: null
+      corsPolicy:
+        allowedOrigins:
+        - '*'
+        allowedMethods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+        allowedHeaders:
+        - '*'
       customDomains: null
       exposedPort: 0
       external: true
       fqdn: ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io
       ipSecurityRestrictions: null
       stickySessions: null
-      targetPort: 80
+      targetPort: 8000
       traffic:
       - latestRevision: true
         weight: 100
@@ -153,30 +165,88 @@ properties:
   template:
     containers:
     - env:
+      # Database Configuration (Azure PostgreSQL with AD Auth)
       - name: USE_AZURE_AD_AUTH
         value: 'true'
+      - name: POSTGRES_HOST
+        value: rm-postgres.postgres.database.azure.com
+      - name: POSTGRES_DB
+        value: postgres
+      - name: POSTGRES_USER
+        value: ryan.matuszewski@logicmonitor.com
+      - name: POSTGRES_PORT
+        value: '5432'
+      # Legacy env vars for compatibility
       - name: PGHOST
         value: rm-postgres.postgres.database.azure.com
       - name: PGDATABASE
         value: postgres
       - name: PGUSER
         value: ryan.matuszewski@logicmonitor.com
+      # Redis Configuration (Azure Cache for Redis)
+      - name: REDIS_URL
+        value: rediss://lm-data-pipeline-redis.redis.cache.windows.net:6380
+      - name: USE_REDIS
+        value: 'true'
+      # Application Settings
+      - name: LOG_LEVEL
+        value: INFO
+      - name: PYTHONUNBUFFERED
+        value: '1'
       - name: LEGACY_MODE
         value: 'false'
+      # Azure Functions Runtime
+      - name: FUNCTIONS_WORKER_RUNTIME
+        value: python
+      # Real-time Streaming Configuration
+      - name: MAX_WEBSOCKET_CONNECTIONS
+        value: '500'
+      - name: RATE_LIMIT_MESSAGES_PER_SECOND
+        value: '50'
+      - name: RATE_LIMIT_BURST_SIZE
+        value: '100'
+      - name: MESSAGE_BUFFER_SIZE
+        value: '1000'
+      - name: CLIENT_STATE_RETENTION_HOURS
+        value: '24'
+      # Background Task Configuration
+      - name: DATA_PROCESSING_INTERVAL
+        value: '30'
+      - name: METRIC_PUBLISHING_INTERVAL
+        value: '10'
+      - name: HEALTH_MONITORING_INTERVAL
+        value: '60'
       image: acrctalmhttps001.azurecr.io/lm-http-ingest:latest
       name: ca-cta-lm-ingest
+      probes:
+      - httpGet:
+          path: /api/health
+          port: 8000
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        type: Liveness
+      - httpGet:
+          path: /api/health
+          port: 8000
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        type: Readiness
       resources:
-        cpu: 0.5
-        ephemeralStorage: 2Gi
-        memory: 1Gi
+        cpu: 1.0
+        ephemeralStorage: 4Gi
+        memory: 2Gi
     initContainers: null
     revisionSuffix: ''
     scale:
       cooldownPeriod: 300
-      maxReplicas: 10
-      minReplicas: 1
+      maxReplicas: 20
+      minReplicas: 2
       pollingInterval: 30
-      rules: null
+      rules:
+      - http:
+          metadata:
+            concurrentRequests: '100'
+        name: http-scaling-rule
     serviceBinds: null
     terminationGracePeriodSeconds: null
     volumes: null

@@ -1,49 +1,58 @@
-# Multi-stage build for smaller image
-FROM python:3.11-slim AS builder
+# ABOUTME: Multi-stage Dockerfile for LogicMonitor Data Pipeline
+# ABOUTME: Uses uv for fast Python dependency management and supports Azure Functions + FastAPI
 
-WORKDIR /app
+# Builder stage - install dependencies with uv
+FROM python:3.12-slim AS builder
 
-# Install build dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     libpq-dev \
     python3-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy and install requirements
-COPY src/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Final stage
-FROM mcr.microsoft.com/azure-functions/python:4-python3.11
+WORKDIR /app
+
+# Copy dependency files
+COPY pyproject.toml ./
+
+# Install Python dependencies
+RUN uv sync --frozen
+
+# Final stage - Azure Functions runtime
+FROM mcr.microsoft.com/azure-functions/python:4-python3.12
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     libpq5 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Set environment variables
+# Install uv in final stage
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Set environment variables for Azure Functions
 ENV AzureWebJobsScriptRoot=/home/site/wwwroot \
     AzureFunctionsJobHost__Logging__Console__IsEnabled=true \
     FUNCTIONS_WORKER_RUNTIME=python \
-    FUNCTIONS_CUSTOMHANDLER_PORT=8080 \
-    ASPNETCORE_URLS=http://+:8080
+    PYTHONUNBUFFERED=1
 
-# Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+# Copy dependencies from builder
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
 
-# Copy function code
-COPY src/ /home/site/wwwroot/
+# Copy application code
+COPY . /home/site/wwwroot/
 
-# Install requirements again to ensure Azure Functions finds them
 WORKDIR /home/site/wwwroot
-RUN pip install --no-cache-dir -r requirements.txt
 
-# REMOVED: User creation and USER directive - Azure Functions needs root
-# RUN useradd -m -u 1000 appuser && \
-#     chown -R appuser:appuser /home/site/wwwroot
-# USER appuser
+# Expose ports for both Azure Functions and FastAPI
+EXPOSE 7071 8000
 
-# Expose the correct port
-EXPOSE 8080
+# Default command (can be overridden)
+CMD ["uv", "run", "python", "-m", "uvicorn", "function_app:fastapi_app", "--host", "0.0.0.0", "--port", "8000"]
