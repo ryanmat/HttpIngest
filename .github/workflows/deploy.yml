@@ -1,0 +1,106 @@
+name: Deploy to Azure Container App
+
+on:
+  push:
+    branches:
+      - feature/production-redesign
+      - main
+  workflow_dispatch:  # Allow manual trigger
+    inputs:
+      version:
+        description: 'Version tag (e.g., v11)'
+        required: true
+        default: 'v11'
+
+env:
+  REGISTRY: acrctalmhttps001
+  RESOURCE_GROUP: CTA_Resource_Group
+  CONTAINER_APP: ca-cta-lm-ingest
+  IMAGE_NAME: lm-http-ingest
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set version from branch or input
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            # Auto-generate version from timestamp and short SHA
+            VERSION="v$(date +'%Y%m%d-%H%M')-$(echo ${{ github.sha }} | cut -c1-7)"
+            echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          fi
+          echo "Deploying version: $VERSION"
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build Docker image in ACR
+        run: |
+          echo "Building image: ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}"
+          az acr build \
+            --registry ${{ env.REGISTRY }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }} \
+            --file Dockerfile \
+            .
+
+      - name: Get Azure AD access token
+        id: token
+        run: |
+          TOKEN=$(az account get-access-token \
+            --resource-type oss-rdbms \
+            --query accessToken \
+            --output tsv)
+          echo "::add-mask::$TOKEN"
+          echo "TOKEN=$TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Deploy to Azure Container App
+        run: |
+          # Remove non-alphanumeric characters for revision suffix
+          REVISION_SUFFIX=$(echo "${{ steps.version.outputs.VERSION }}" | tr -cd '[:alnum:]-')
+
+          echo "Deploying to container app with revision: $REVISION_SUFFIX"
+          az containerapp update \
+            --name ${{ env.CONTAINER_APP }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --image ${{ env.REGISTRY }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }} \
+            --set-env-vars "PGPASSWORD=${{ steps.token.outputs.TOKEN }}" \
+            --revision-suffix "$REVISION_SUFFIX"
+
+      - name: Health check
+        run: |
+          echo "Waiting for deployment to stabilize..."
+          sleep 10
+
+          HEALTH_URL="https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health"
+          echo "Checking health endpoint: $HEALTH_URL"
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$HEALTH_URL")
+          echo "Health check returned: HTTP $HTTP_CODE"
+
+          if [ "$HTTP_CODE" == "200" ]; then
+            echo "✓ Health check passed"
+          else
+            echo "⚠ Health check returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+      - name: Deployment summary
+        run: |
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Deployment completed successfully!"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Version:       ${{ steps.version.outputs.VERSION }}"
+          echo "Branch:        ${{ github.ref_name }}"
+          echo "Image:         ${{ env.REGISTRY }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}"
+          echo "Container App: ${{ env.CONTAINER_APP }}"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
