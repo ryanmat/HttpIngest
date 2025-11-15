@@ -44,7 +44,8 @@ ENV AzureWebJobsScriptRoot=/home/site/wwwroot \
 
 # Copy dependencies from builder
 COPY --from=builder /app/.venv /app/.venv
-ENV PATH="/app/.venv/bin:$PATH"
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/.venv/lib/python3.12/site-packages:$PYTHONPATH"
 
 # Copy application code
 COPY . /home/site/wwwroot/
