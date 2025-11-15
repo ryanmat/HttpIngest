@@ -51,8 +51,7 @@ COPY . /home/site/wwwroot/
 
 WORKDIR /home/site/wwwroot
 
-# Expose ports for both Azure Functions and FastAPI
-EXPOSE 7071 8000
+# Expose port for Azure Functions
+EXPOSE 80
 
-# Default command (can be overridden)
-CMD ["uv", "run", "python", "-m", "uvicorn", "function_app:fastapi_app", "--host", "0.0.0.0", "--port", "8000"]
+# Use Azure Functions default startup (don't override CMD)
