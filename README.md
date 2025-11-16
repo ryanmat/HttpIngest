@@ -5,15 +5,15 @@
 
 # LogicMonitor OTLP Data Pipeline
 
-Production-grade async data pipeline for ingesting, normalizing, and exporting OpenTelemetry Protocol (OTLP) metrics from LogicMonitor Collector HTTPS Publisher.
+Async data pipeline for ingesting, normalizing, and exporting OTLP formatted JSON metrics from LogicMonitor Collector HTTPS Publisher.
 
 ## Architecture
 
 **Components:**
 - Azure Container Apps (async Python FastAPI application)
 - Azure PostgreSQL Flexible Server (normalized schema with materialized views)
-- Azure Managed Identity (passwordless database authentication)
-- Background processing (collector publisher, health monitoring, token refresh)
+- Azure Managed Identity 
+- Background processing
 
 **Data Flow:**
 ```
@@ -501,11 +501,3 @@ Adjust connection pool settings:
 DATABASE_POOL_SIZE=10  # Reduce if needed
 DATABASE_MAX_OVERFLOW=20
 ```
-
-## License
-
-Proprietary - LogicMonitor Internal Use
-
-## Support
-
-For issues or questions, contact the LogicMonitor Data Platform team or create an issue in the repository.
