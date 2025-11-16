@@ -1,7 +1,4 @@
-trigger:
-  branches:
-    include:
-    - main
+trigger: none  # Disabled until service connection is configured - run manually when ready
 
 variables:
   # Azure Service Connection (must be configured in Azure DevOps)
