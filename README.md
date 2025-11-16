@@ -81,10 +81,10 @@ uv run alembic upgrade head
 
 ```bash
 # Database
-POSTGRES_HOST=rm-postgres.postgres.database.azure.com
+POSTGRES_HOST=postgres-server.postgres.database.azure.com
 POSTGRES_PORT=5432
 POSTGRES_DB=postgres
-POSTGRES_USER=ryan.matuszewski@logicmonitor.com
+POSTGRES_USER=azuread_user@example.com
 USE_MANAGED_IDENTITY=true  # Use Azure AD authentication
 
 # Application
@@ -122,7 +122,7 @@ CORS_ORIGINS=*  # Or specific origins
 ```bash
 # Set variables
 RESOURCE_GROUP="CTA_Resource_Group"
-CONTAINER_APP="ca-cta-lm-ingest"
+CONTAINER_APP="lm-ingest-app"
 ACR_NAME="acrctalmhttps001"
 IMAGE_NAME="lm-http-ingest"
 VERSION="v12.4"
@@ -164,7 +164,7 @@ PRINCIPAL_ID=$(az containerapp identity show \
 # Create Azure AD admin for PostgreSQL
 az postgres flexible-server ad-admin create \
   --resource-group $RESOURCE_GROUP \
-  --server-name rm-postgres \
+  --server-name postgres-server \
   --display-name $CONTAINER_APP \
   --object-id $PRINCIPAL_ID
 ```
@@ -175,12 +175,12 @@ az postgres flexible-server ad-admin create \
 
 ```bash
 # Ingest OTLP metrics (uncompressed)
-curl -X POST https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/HttpIngest \
+curl -X POST https://your-app.azurecontainerapps.io/api/HttpIngest \
   -H "Content-Type: application/json" \
   -d @otlp_payload.json
 
 # Ingest OTLP metrics (gzip compressed)
-curl -X POST https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/HttpIngest \
+curl -X POST https://your-app.azurecontainerapps.io/api/HttpIngest \
   -H "Content-Type: application/json" \
   -H "Content-Encoding: gzip" \
   --data-binary @otlp_payload.json.gz
@@ -190,41 +190,41 @@ curl -X POST https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapp
 
 ```bash
 # Health check
-curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health
+curl https://your-app.azurecontainerapps.io/api/health
 
 # List all metrics
-curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/metrics
+curl https://your-app.azurecontainerapps.io/api/metrics
 
 # Metrics summary
-curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/metrics/summary
+curl https://your-app.azurecontainerapps.io/api/metrics/summary
 ```
 
 ### Export Endpoints
 
 ```bash
 # Prometheus format (last 24 hours)
-curl "https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/metrics/prometheus?hours=24"
+curl "https://your-app.azurecontainerapps.io/metrics/prometheus?hours=24"
 
 # CSV export (specific metric)
-curl "https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/export/csv?metrics=cpu.usage&hours=1" -o metrics.csv
+curl "https://your-app.azurecontainerapps.io/export/csv?metrics=cpu.usage&hours=1" -o metrics.csv
 
 # JSON export
-curl "https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/export/json?metrics=cpu.usage,memory.usage&hours=24" -o metrics.json
+curl "https://your-app.azurecontainerapps.io/export/json?metrics=cpu.usage,memory.usage&hours=24" -o metrics.json
 ```
 
 ### Grafana SimpleJSON Datasource
 
 ```bash
 # Health check
-curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/grafana/
+curl https://your-app.azurecontainerapps.io/grafana/
 
 # Search metrics
-curl -X POST https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/grafana/search \
+curl -X POST https://your-app.azurecontainerapps.io/grafana/search \
   -H "Content-Type: application/json" \
   -d '{"target": "cpu"}'
 
 # Query time series
-curl -X POST https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/grafana/query \
+curl -X POST https://your-app.azurecontainerapps.io/grafana/query \
   -H "Content-Type: application/json" \
   -d '{
     "targets": [{"target": "cpu.usage"}],
@@ -240,10 +240,10 @@ curl -X POST https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapp
 
 ```bash
 # Get OData metadata
-curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/powerbi/\$metadata
+curl https://your-app.azurecontainerapps.io/powerbi/\$metadata
 
 # Query metrics (OData format)
-curl "https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/powerbi/metrics?\$filter=metric_name eq 'cpu.usage'&\$top=1000"
+curl "https://your-app.azurecontainerapps.io/powerbi/metrics?\$filter=metric_name eq 'cpu.usage'&\$top=1000"
 ```
 
 ## LogicMonitor Configuration
@@ -253,7 +253,7 @@ Configure Collector HTTPS Publisher in LogicMonitor:
 ```properties
 # In Collector agent.conf or via UI
 publisher.http.enable=true
-publisher.http.url=https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/HttpIngest
+publisher.http.url=https://your-app.azurecontainerapps.io/api/HttpIngest
 publisher.http.format=otlp
 publisher.http.compression=gzip
 publisher.http.batch.size=100
@@ -267,20 +267,20 @@ Restart collector after configuration changes.
 ### Grafana Setup
 
 1. Install SimpleJSON datasource plugin
-2. Add datasource with URL: `https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/grafana`
+2. Add datasource with URL: `https://your-app.azurecontainerapps.io/grafana`
 3. Create dashboard and select metrics from datasource
 
 ### PowerBI Connection
 
 **Option 1: Direct PostgreSQL Connection**
 1. Get Data → PostgreSQL Database
-2. Server: `rm-postgres.postgres.database.azure.com`
+2. Server: `postgres-server.postgres.database.azure.com`
 3. Database: `postgres`
 4. Authentication: Azure AD (with managed identity) or Username/Password
 
 **Option 2: OData Feed**
 1. Get Data → OData Feed
-2. URL: `https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/powerbi`
+2. URL: `https://your-app.azurecontainerapps.io/powerbi`
 3. Select tables and load data
 
 ### Prometheus Scraping
@@ -295,7 +295,7 @@ scrape_configs:
     params:
       hours: ['1']  # Last hour of data
     static_configs:
-      - targets: ['ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io']
+      - targets: ['your-app.azurecontainerapps.io']
 ```
 
 ## Local Development
@@ -304,7 +304,7 @@ scrape_configs:
 
 ```bash
 # Clone repository
-git clone https://github.com/ryanmat/HttpIngest.git
+git clone https://github.com/your-org/HttpIngest.git
 cd HttpIngest
 
 # Install dependencies
@@ -385,13 +385,13 @@ Application automatically logs to Application Insights when `APPINSIGHTS_CONNECT
 ```bash
 # Stream logs
 az containerapp logs show \
-  --name ca-cta-lm-ingest \
+  --name lm-ingest-app \
   --resource-group CTA_Resource_Group \
   --follow
 
 # Query specific errors
 az containerapp logs show \
-  --name ca-cta-lm-ingest \
+  --name lm-ingest-app \
   --resource-group CTA_Resource_Group \
   --tail 100 | grep ERROR
 ```
@@ -469,7 +469,7 @@ Managed identity tokens expire after 90 minutes. Application automatically refre
 **Manual token refresh:**
 ```bash
 az containerapp restart \
-  --name ca-cta-lm-ingest \
+  --name lm-ingest-app \
   --resource-group CTA_Resource_Group
 ```
 
@@ -479,7 +479,7 @@ Check managed identity permissions:
 # Verify Azure AD admin
 az postgres flexible-server ad-admin list \
   --resource-group CTA_Resource_Group \
-  --server-name rm-postgres
+  --server-name postgres-server
 ```
 
 ### Collector Publisher Not Processing
@@ -487,7 +487,7 @@ Check background task status:
 ```bash
 # View environment variables
 az containerapp show \
-  --name ca-cta-lm-ingest \
+  --name lm-ingest-app \
   --resource-group CTA_Resource_Group \
   --query "properties.template.containers[0].env"
 
