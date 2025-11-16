@@ -141,3 +141,24 @@ claude.md
 # macOS
 .DS_Store
 **/.DS_Store
+
+# v12.4 - Unused Features (Future Work)
+# ML modules (not deployed in v12-lite, require heavy dependencies)
+src/feature_engineering.py
+src/anomaly_detector.py
+src/predictor.py
+
+# Old synchronous processor (replaced by data_processor_async.py)
+src/data_processor.py
+
+# Empty placeholder directories
+src/ml/
+src/parsers/
+src/processors/
+
+# Tests for unused features
+tests/test_feature_engineering.py
+tests/test_anomaly_detector.py
+tests/test_predictor.py
+tests/test_data_processor.py
+tests/test_e2e_integration.py

@@ -373,7 +373,12 @@ class GrafanaSimpleJSONDataSource:
             "annotation": {"name": "...", "query": "..."}
         }
         """
-        # Placeholder - would integrate with anomaly detection results
+        # FUTURE: Integration point for anomaly detection system
+        # When ML features are enabled, this endpoint will return annotations for:
+        # - Detected anomalies from AnomalyDetector
+        # - Significant metric changes
+        # - System events and alerts
+        # For now, returning empty array (Grafana handles this gracefully)
         return []
 
     def _parse_datetime(self, dt_str: Optional[str]) -> datetime:

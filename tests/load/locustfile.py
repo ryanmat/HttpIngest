@@ -237,29 +237,6 @@ class SpikeTestUser(DataPipelineUser):
     wait_time = between(0, 0.1)  # Minimal wait for spike testing
 
 
-class WebSocketUser(HttpUser):
-    """
-    User for WebSocket load testing.
-
-    Tests real-time streaming capabilities.
-    """
-
-    host = "wss://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io"
-    wait_time = between(1, 2)
-
-    def on_start(self):
-        """Connect to WebSocket."""
-        # Note: WebSocket testing requires additional setup
-        # Consider using websocket-client library
-        pass
-
-    @task
-    def placeholder(self):
-        """Placeholder for WebSocket testing."""
-        # TODO: Implement WebSocket connection and message sending
-        pass
-
-
 # Event handlers for custom metrics
 
 @events.init_command_line_parser.add_listener

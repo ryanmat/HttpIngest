@@ -1,0 +1,54 @@
+# ABOUTME: Dockerfile optimized for Azure Container Apps deployment
+# ABOUTME: Uses standard Python image with uv and runs FastAPI directly via uvicorn
+
+# Builder stage - install dependencies with uv
+FROM python:3.12-slim AS builder
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    libpq-dev \
+    python3-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Copy dependency files
+COPY pyproject.toml uv.lock ./
+
+# Install Python dependencies
+RUN uv sync --frozen
+
+# Final stage - lightweight runtime
+FROM python:3.12-slim
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libpq5 \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv in final stage
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+
+# Copy dependencies from builder
+COPY --from=builder /app/.venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app:$PYTHONPATH" \
+    PYTHONUNBUFFERED=1
+
+# Copy application code
+COPY . /app/
+
+# Expose port for Container Apps
+EXPOSE 8000
+
+# Run FastAPI with uvicorn via python module
+CMD ["python", "-m", "uvicorn", "containerapp_main:app", "--host", "0.0.0.0", "--port", "8000"]
