@@ -142,6 +142,10 @@ claude.md
 .DS_Store
 **/.DS_Store
 
+# Temporary testing/utility scripts
+check_processing.py
+check_processing_detailed.py
+
 # v12.4 - Unused Features (Future Work)
 # ML modules (not deployed in v12-lite, require heavy dependencies)
 src/feature_engineering.py
