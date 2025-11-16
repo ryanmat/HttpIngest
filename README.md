@@ -117,7 +117,14 @@ CORS_ORIGINS=*  # Or specific origins
 
 ## Deployment
 
-### Azure Container App
+### Automated CI/CD with Azure DevOps
+
+For automated deployments using Azure DevOps pipelines:
+- **Setup Guide**: See [azure-devops/SETUP.md](azure-devops/SETUP.md)
+- **Quick Checklist**: See [azure-devops/CHECKLIST.md](azure-devops/CHECKLIST.md)
+- **Pipeline**: [azure-devops/azure-pipelines.yml](azure-devops/azure-pipelines.yml)
+
+### Manual Deployment - Azure Container App
 
 ```bash
 # Set variables
