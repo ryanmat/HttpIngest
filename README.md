@@ -28,10 +28,14 @@ LogicMonitor Collector → HTTPS Publisher → Container App (/api/HttpIngest)
 - Normalized database schema (resources, datasources, metrics, data points)
 - Materialized views for aggregation (hourly, latest, resource summaries)
 - Multiple export formats (Prometheus, Grafana SimpleJSON, PowerBI OData, CSV/JSON)
-- Real-time streaming (WebSocket, Server-Sent Events)
+- Real-time streaming (WebSocket, Server-Sent Events) with REDIS
 - Managed identity authentication (no password storage)
 - Auto-scaling (3-10 replicas based on load)
 - Gzip compression support
+
+## Note on LLM Models
+
+There is always a big debate on letting LLM's touch your code.  Personally, for me, I have Claude run my testing for me.  This allows me to streamline the tests being ran while seeing any recommendations for improvements.
 
 ## Prerequisites
 
