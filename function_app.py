@@ -191,12 +191,6 @@ async def health_monitoring_loop():
             except:
                 health_status["database"] = "unhealthy"
 
-            # Check streaming
-            if stream_manager:
-                health_status["streaming"] = "healthy"
-            else:
-                health_status["streaming"] = "unhealthy"
-
             # Log health status
             unhealthy = [k for k, v in health_status.items() if v == "unhealthy"]
             if unhealthy:
