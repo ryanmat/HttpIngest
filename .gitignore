@@ -149,3 +149,11 @@ docs/using-uv.md
 # Temporary testing/utility scripts
 check_processing.py
 check_processing_detailed.py
+
+# Editor-specific files
+.vscode/
+**/.vscode/
+
+# GitHub workflows
+.github/
+**/.github/
