@@ -390,34 +390,49 @@ async def http_ingest(request: Request):
 # EXPORT ENDPOINTS (Prometheus, Grafana, PowerBI, CSV/JSON)
 # ============================================================================
 
-# Initialize exporters
-db_conn_str = get_db_connection_string()
-prometheus_exporter = PrometheusExporter(db_conn_str)
-grafana_datasource = GrafanaSimpleJSONDataSource(db_conn_str)
-powerbi_exporter = PowerBIExporter(db_conn_str)
-csv_json_exporter = CSVJSONExporter(db_conn_str)
+# Note: Exporters are created per-request to use fresh Azure AD tokens
 
 
 @app.get("/metrics")
 async def prometheus_metrics():
     """Prometheus metrics endpoint."""
-    metrics_text = prometheus_exporter.export_metrics()
-    return Response(content=metrics_text, media_type="text/plain; version=0.0.4")
+    try:
+        exporter = PrometheusExporter(get_db_connection_string())
+        query = TimeSeriesQuery(
+            start_time=datetime.now() - timedelta(hours=1),
+            end_time=datetime.now(),
+            limit=1000
+        )
+        metrics_text = exporter.export_metrics(query)
+        return Response(content=metrics_text, media_type="text/plain; version=0.0.4")
+    except Exception as e:
+        logger.error(f"Prometheus export error: {e}")
+        return Response(content=f"# Error: {str(e)}\n", media_type="text/plain", status_code=500)
 
 
 @app.get("/grafana/search")
 async def grafana_search(request: Request):
     """Grafana SimpleJSON search endpoint."""
-    result = grafana_datasource.search()
-    return JSONResponse(content=result)
+    try:
+        datasource = GrafanaSimpleJSONDataSource(get_db_connection_string())
+        result = datasource.search()
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Grafana search error: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @app.post("/grafana/query")
 async def grafana_query(request: Request):
     """Grafana SimpleJSON query endpoint."""
-    body = await request.json()
-    result = grafana_datasource.query(body)
-    return JSONResponse(content=result)
+    try:
+        datasource = GrafanaSimpleJSONDataSource(get_db_connection_string())
+        body = await request.json()
+        result = datasource.query(body)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"Grafana query error: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @app.get("/export/powerbi")
@@ -426,12 +441,17 @@ async def powerbi_export(
     end_time: Optional[str] = Query(None)
 ):
     """Export data in PowerBI-compatible format."""
-    query = TimeSeriesQuery(
-        start_time=datetime.fromisoformat(start_time) if start_time else datetime.now() - timedelta(hours=24),
-        end_time=datetime.fromisoformat(end_time) if end_time else datetime.now()
-    )
-    result = powerbi_exporter.export(query)
-    return JSONResponse(content=result)
+    try:
+        exporter = PowerBIExporter(get_db_connection_string())
+        query = TimeSeriesQuery(
+            start_time=datetime.fromisoformat(start_time) if start_time else datetime.now() - timedelta(hours=24),
+            end_time=datetime.fromisoformat(end_time) if end_time else datetime.now()
+        )
+        result = exporter.export_data(query)
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"PowerBI export error: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
 @app.get("/export/csv")
@@ -440,17 +460,22 @@ async def csv_export(
     end_time: Optional[str] = Query(None)
 ):
     """Export data as CSV."""
-    query = TimeSeriesQuery(
-        start_time=datetime.fromisoformat(start_time) if start_time else datetime.now() - timedelta(hours=24),
-        end_time=datetime.fromisoformat(end_time) if end_time else datetime.now()
-    )
-    csv_data = csv_json_exporter.export_csv(query)
+    try:
+        exporter = CSVJSONExporter(get_db_connection_string())
+        query = TimeSeriesQuery(
+            start_time=datetime.fromisoformat(start_time) if start_time else datetime.now() - timedelta(hours=24),
+            end_time=datetime.fromisoformat(end_time) if end_time else datetime.now()
+        )
+        csv_data = exporter.export_csv(query)
 
-    return Response(
-        content=csv_data,
-        media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=metrics.csv"}
-    )
+        return Response(
+            content=csv_data,
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=metrics.csv"}
+        )
+    except Exception as e:
+        logger.error(f"CSV export error: {e}")
+        return Response(content=f"Error: {str(e)}", media_type="text/plain", status_code=500)
 
 
 @app.get("/export/json")
@@ -459,12 +484,17 @@ async def json_export(
     end_time: Optional[str] = Query(None)
 ):
     """Export data as JSON."""
-    query = TimeSeriesQuery(
-        start_time=datetime.fromisoformat(start_time) if start_time else datetime.now() - timedelta(hours=24),
-        end_time=datetime.fromisoformat(end_time) if end_time else datetime.now()
-    )
-    result = csv_json_exporter.export_json(query)
-    return JSONResponse(content=result)
+    try:
+        exporter = CSVJSONExporter(get_db_connection_string())
+        query = TimeSeriesQuery(
+            start_time=datetime.fromisoformat(start_time) if start_time else datetime.now() - timedelta(hours=24),
+            end_time=datetime.fromisoformat(end_time) if end_time else datetime.now()
+        )
+        result = exporter.export_json(query)
+        return JSONResponse(content=json.loads(result))
+    except Exception as e:
+        logger.error(f"JSON export error: {e}")
+        return JSONResponse(content={"error": str(e)}, status_code=500)
 
 
 if __name__ == "__main__":

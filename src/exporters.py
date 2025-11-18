@@ -466,7 +466,21 @@ class PowerBIExporter:
                 JOIN resources r ON m.resource_id = r.id
                 WHERE 1=1
             """
-            params = count_params.copy()
+            params = []
+
+            # Add same filters as count query
+            if query.metric_names:
+                placeholders = ','.join(['%s'] * len(query.metric_names))
+                sql += f" AND md.name IN ({placeholders})"
+                params.extend(query.metric_names)
+
+            if query.start_time:
+                sql += " AND m.timestamp >= %s"
+                params.append(query.start_time)
+
+            if query.end_time:
+                sql += " AND m.timestamp <= %s"
+                params.append(query.end_time)
 
             sql += " ORDER BY m.timestamp DESC OFFSET %s LIMIT %s"
             params.extend([skip, top])

@@ -203,15 +203,25 @@ curl https://your-app.azurecontainerapps.io/api/health
 ### Export Endpoints
 
 ```bash
-# Prometheus format
+# Prometheus format (for scraping)
 curl "https://your-app.azurecontainerapps.io/metrics"
 
-# CSV export
-curl "https://your-app.azurecontainerapps.io/export/csv?start_time=2025-01-01T00:00:00Z" -o metrics.csv
+# CSV export (for Excel/spreadsheets)
+curl "https://your-app.azurecontainerapps.io/export/csv?start_time=2025-01-01T00:00:00&end_time=2025-01-02T00:00:00" -o metrics.csv
 
-# JSON export
-curl "https://your-app.azurecontainerapps.io/export/json?start_time=2025-01-01T00:00:00Z" -o metrics.json
+# JSON export (for custom applications)
+curl "https://your-app.azurecontainerapps.io/export/json?start_time=2025-01-01T00:00:00&limit=1000"
+
+# PowerBI OData format (native PowerBI support)
+curl "https://your-app.azurecontainerapps.io/export/powerbi?skip=0&top=1000"
 ```
+
+**Export Parameters:**
+- `start_time` - ISO 8601 timestamp (default: 24 hours ago)
+- `end_time` - ISO 8601 timestamp (default: now)
+- `limit` - Maximum records to return (JSON/CSV)
+- `skip` - Records to skip for pagination (PowerBI)
+- `top` - Records per page (PowerBI, default: 1000)
 
 ### Grafana SimpleJSON Datasource
 
@@ -264,16 +274,39 @@ Restart collector after configuration changes.
 
 ### PowerBI Connection
 
-**Option 1: Direct PostgreSQL Connection**
+**Option 1: OData REST API (Recommended)**
+
+The `/export/powerbi` endpoint returns OData-compatible JSON that PowerBI can consume natively:
+
+```json
+{
+  "value": [
+    {
+      "metric": "cpu.usage",
+      "timestamp": "2025-01-01T12:00:00+00:00",
+      "value": 45.2,
+      "datasource": "Host_CPU",
+      "resource_hostId": "1234",
+      "resource_hostName": "server01.example.com",
+      "attr_wildAlias": "CPU_Total",
+      "attr_datapointid": "5678"
+    }
+  ],
+  "@odata.count": 10000,
+  "@odata.nextLink": "/export/powerbi?skip=1000&top=1000"
+}
+```
+
+PowerBI Setup:
+1. Get Data → Web → URL: `https://your-app.azurecontainerapps.io/export/powerbi`
+2. Transform data: Navigate to `value` column and expand records
+3. Set up scheduled refresh for automatic updates
+
+**Option 2: Direct PostgreSQL Connection**
 1. Get Data → PostgreSQL Database
 2. Server: `postgres-server.postgres.database.azure.com`
 3. Database: `postgres`
 4. Authentication: Azure AD
-
-**Option 2: Export Endpoint**
-1. Use `/export/powerbi` endpoint
-2. Import JSON response into PowerBI
-3. Set up scheduled refresh
 
 ### Prometheus Scraping
 
