@@ -300,12 +300,6 @@ def health_check(req: func.HttpRequest) -> func.HttpResponse:
         health_status["components"]["database"] = f"unhealthy: {str(e)}"
         health_status["status"] = "degraded"
 
-    # Check streaming
-    if stream_manager:
-        health_status["components"]["streaming"] = "healthy"
-    else:
-        health_status["components"]["streaming"] = "not initialized"
-
     # Check background tasks
     running_tasks = sum(1 for t in background_tasks.values() if not t.done())
     health_status["components"]["background_tasks"] = f"{running_tasks}/{len(background_tasks)} running"

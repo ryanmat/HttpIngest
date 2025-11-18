@@ -377,7 +377,6 @@ Response:
   "timestamp": "2025-01-16T20:26:03.518041",
   "components": {
     "database": "healthy",
-    "streaming": "not initialized",
     "background_tasks": "3/3 running"
   }
 }
