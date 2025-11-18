@@ -288,6 +288,7 @@ async def health_check():
     health_status = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
+        "version": "13.1-no-streaming",
         "components": {}
     }
 
