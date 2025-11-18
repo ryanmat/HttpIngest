@@ -116,7 +116,7 @@ Use the deployment script for Container Apps:
 
 ```bash
 # Deploy specific version
-./scripts/deploy.sh v13.3 main
+./scripts/deploy.sh v15 main
 
 # Script will:
 # - Build Docker image in ACR from GitHub
@@ -133,7 +133,7 @@ RESOURCE_GROUP="resource-group-name"
 CONTAINER_APP="container-app-name"
 ACR_NAME="registry-name"
 IMAGE_NAME="lm-http-ingest"
-VERSION="v13.3"
+VERSION="v15"
 
 # Build and push image to ACR
 az acr build \
@@ -226,8 +226,8 @@ curl "https://your-app.azurecontainerapps.io/export/powerbi?skip=0&top=1000"
 ### Grafana SimpleJSON Datasource
 
 ```bash
-# Search metrics
-curl -X POST https://your-app.azurecontainerapps.io/grafana/search
+# Search metrics (returns list of available metrics)
+curl https://your-app.azurecontainerapps.io/grafana/search
 
 # Query time series
 curl -X POST https://your-app.azurecontainerapps.io/grafana/query \
@@ -239,13 +239,6 @@ curl -X POST https://your-app.azurecontainerapps.io/grafana/query \
       "to": "2025-01-01T23:59:59Z"
     }
   }'
-```
-
-### PowerBI Export
-
-```bash
-# Export data for PowerBI
-curl "https://your-app.azurecontainerapps.io/export/powerbi?start_time=2025-01-01T00:00:00Z"
 ```
 
 ## LogicMonitor Configuration
@@ -387,7 +380,7 @@ Response:
 {
   "status": "healthy",
   "timestamp": "2025-01-16T20:26:03.518041",
-  "version": "13.1-no-streaming",
+  "version": "v15",
   "components": {
     "database": "healthy",
     "background_tasks": "3/3 running"

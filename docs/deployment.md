@@ -13,7 +13,7 @@ This project deploys to Azure Container Apps using Azure Container Registry (ACR
 - **Container App:** `ca-cta-lm-ingest`
 - **Resource Group:** `CTA_Resource_Group`
 - **Database:** Azure PostgreSQL 17.5 with Azure AD authentication
-- **Current Version:** v10
+- **Current Version:** v15
 
 **Endpoints:**
 - Health: `https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health`
@@ -164,7 +164,7 @@ curl "https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/ap
 az postgres flexible-server connect \
   --name rm-postgres \
   --database postgres \
-  --admin-user ryan.matuszewski@logicmonitor.com \
+  --admin-user your-admin@yourdomain.com \
   --admin-password "$TOKEN"
 
 # Query lm_metrics
@@ -246,7 +246,7 @@ az acr task logs \
 - Manual deployments: `v<number>` (e.g., v10, v11)
 - GitHub Actions auto: `v<YYYYMMDD-HHMM>-<sha>` (e.g., v20251114-2030-a1b2c3d)
 
-**Current Production Version:** v10
+**Current Production Version:** v15
 
 **Versioning Strategy:**
 - Increment version for each deployment
@@ -303,4 +303,4 @@ Before deploying to production:
 ---
 
 **Last Updated:** 2025-11-14
-**Maintainer:** Ryan Matuszewski
+**Maintainer:** Project Team

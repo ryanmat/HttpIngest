@@ -126,7 +126,7 @@ The migration system uses these environment variables:
 # Database connection
 export PGHOST="rm-postgres.postgres.database.azure.com"
 export PGDATABASE="postgres"
-export PGUSER="ryan.matuszewski@logicmonitor.com"
+export PGUSER="your-admin@yourdomain.com"
 export PGPORT="5432"
 
 # Optional: Pre-set password/token (otherwise acquired via az CLI)
