@@ -40,6 +40,8 @@ def clean_alembic_version(db_connection):
     yield
 
     # Cleanup after test
+    # Rollback any failed transaction before cleanup
+    db_connection.rollback()
     with db_connection.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS alembic_version")
         db_connection.commit()
@@ -105,9 +107,14 @@ def test_initial_migration_content():
 
 def test_migration_upgrade_creates_table(db_connection, clean_alembic_version, alembic_config):
     """Test that migration upgrade creates lm_metrics table if it doesn't exist."""
-    # Drop lm_metrics table if it exists
+    # Drop all migration tables if they exist
     with db_connection.cursor() as cur:
-        cur.execute("DROP TABLE IF EXISTS lm_metrics")
+        cur.execute("DROP TABLE IF EXISTS processing_status CASCADE")
+        cur.execute("DROP TABLE IF EXISTS metric_data CASCADE")
+        cur.execute("DROP TABLE IF EXISTS metric_definitions CASCADE")
+        cur.execute("DROP TABLE IF EXISTS datasources CASCADE")
+        cur.execute("DROP TABLE IF EXISTS resources CASCADE")
+        cur.execute("DROP TABLE IF EXISTS lm_metrics CASCADE")
         db_connection.commit()
 
     # Run migration upgrade
@@ -142,9 +149,18 @@ def test_migration_upgrade_creates_table(db_connection, clean_alembic_version, a
 
 def test_migration_upgrade_preserves_existing_table(db_connection, clean_alembic_version, alembic_config):
     """Test that migration upgrade preserves existing lm_metrics table."""
+    # Drop all migration tables first
+    with db_connection.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS processing_status CASCADE")
+        cur.execute("DROP TABLE IF EXISTS metric_data CASCADE")
+        cur.execute("DROP TABLE IF EXISTS metric_definitions CASCADE")
+        cur.execute("DROP TABLE IF EXISTS datasources CASCADE")
+        cur.execute("DROP TABLE IF EXISTS resources CASCADE")
+        cur.execute("DROP TABLE IF EXISTS lm_metrics CASCADE")
+        db_connection.commit()
+
     # Create lm_metrics table with test data
     with db_connection.cursor() as cur:
-        cur.execute("DROP TABLE IF EXISTS lm_metrics CASCADE")
         cur.execute("""
             CREATE TABLE lm_metrics (
                 id SERIAL PRIMARY KEY,
@@ -177,6 +193,16 @@ def test_migration_upgrade_preserves_existing_table(db_connection, clean_alembic
 
 def test_migration_downgrade_preserves_data(db_connection, clean_alembic_version, alembic_config):
     """Test that migration downgrade does NOT drop lm_metrics table."""
+    # Drop all migration tables first
+    with db_connection.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS processing_status CASCADE")
+        cur.execute("DROP TABLE IF EXISTS metric_data CASCADE")
+        cur.execute("DROP TABLE IF EXISTS metric_definitions CASCADE")
+        cur.execute("DROP TABLE IF EXISTS datasources CASCADE")
+        cur.execute("DROP TABLE IF EXISTS resources CASCADE")
+        cur.execute("DROP TABLE IF EXISTS lm_metrics CASCADE")
+        db_connection.commit()
+
     # Run migration upgrade
     command.upgrade(alembic_config, "head")
 
@@ -239,6 +265,16 @@ def test_migration_current_shows_none_before_upgrade(db_connection, clean_alembi
 
 def test_migration_current_shows_head_after_upgrade(db_connection, clean_alembic_version, alembic_config):
     """Test that current revision is set after upgrade."""
+    # Drop all migration tables first
+    with db_connection.cursor() as cur:
+        cur.execute("DROP TABLE IF EXISTS processing_status CASCADE")
+        cur.execute("DROP TABLE IF EXISTS metric_data CASCADE")
+        cur.execute("DROP TABLE IF EXISTS metric_definitions CASCADE")
+        cur.execute("DROP TABLE IF EXISTS datasources CASCADE")
+        cur.execute("DROP TABLE IF EXISTS resources CASCADE")
+        cur.execute("DROP TABLE IF EXISTS lm_metrics CASCADE")
+        db_connection.commit()
+
     # Run upgrade
     command.upgrade(alembic_config, "head")
 

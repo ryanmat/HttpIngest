@@ -40,12 +40,17 @@ def normalized_schema(db_connection, alembic_config):
 
     yield
 
-    # Cleanup: Downgrade to remove normalized tables
-    command.downgrade(alembic_config, "base")
+    # Cleanup: Rollback any failed transactions first
+    db_connection.rollback()
 
-    # Drop alembic_version
+    # Drop all tables manually instead of using downgrade (avoids materialized view issues)
     with db_connection.cursor() as cur:
         cur.execute("DROP TABLE IF EXISTS alembic_version CASCADE")
+        cur.execute("DROP TABLE IF EXISTS processing_status CASCADE")
+        cur.execute("DROP TABLE IF EXISTS metric_data CASCADE")
+        cur.execute("DROP TABLE IF EXISTS metric_definitions CASCADE")
+        cur.execute("DROP TABLE IF EXISTS datasources CASCADE")
+        cur.execute("DROP TABLE IF EXISTS resources CASCADE")
         db_connection.commit()
 
 
