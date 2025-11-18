@@ -1,6 +1,6 @@
 # Migration Quick Start Guide
 
-## ⚠️ CRITICAL - First Time Setup
+##  CRITICAL - First Time Setup
 
 **For the existing production database with 1191+ records:**
 
@@ -53,10 +53,10 @@ uv run pytest tests/test_migrations.py -v
 
 ## Safety Features
 
-✅ **Preserves Production Data**: Downgrade does NOT drop tables
-✅ **Azure AD Authentication**: Auto-acquires tokens via az CLI
-✅ **Transaction Safety**: Failed migrations auto-rollback
-✅ **Production Warnings**: Confirms before modifying production
+ **Preserves Production Data**: Downgrade does NOT drop tables
+ **Azure AD Authentication**: Auto-acquires tokens via az CLI
+ **Transaction Safety**: Failed migrations auto-rollback
+ **Production Warnings**: Confirms before modifying production
 
 ## Environment Setup
 

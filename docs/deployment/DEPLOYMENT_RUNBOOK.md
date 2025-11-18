@@ -82,7 +82,7 @@ redis-password
 app-insights-connection-string
 ```
 
-**Checkpoint:** ✅ All secrets uploaded
+**Checkpoint:**  All secrets uploaded
 
 ---
 
@@ -100,14 +100,14 @@ chmod +x scripts/setup_monitoring.sh
 
 **Expected output:**
 ```
-✅ Application Insights exists
-✅ Action group created: lm-pipeline-alerts
-✅ Alert created: High-5xx-Error-Rate
-✅ Alert created: High-Response-Time
-✅ Alert created: Low-Availability
-✅ Alert created: High-CPU-Usage
-✅ Alert created: High-Memory-Usage
-✅ Alert created: High-Replica-Restart-Rate
+ Application Insights exists
+ Action group created: lm-pipeline-alerts
+ Alert created: High-5xx-Error-Rate
+ Alert created: High-Response-Time
+ Alert created: Low-Availability
+ Alert created: High-CPU-Usage
+ Alert created: High-Memory-Usage
+ Alert created: High-Replica-Restart-Rate
 ```
 
 ### Configure Alert Recipients
@@ -120,7 +120,7 @@ az monitor action-group update \
   --add-action email ryan-alerts ryan.matuszewski@logicmonitor.com
 ```
 
-**Checkpoint:** ✅ Monitoring configured
+**Checkpoint:**  Monitoring configured
 
 ---
 
@@ -196,7 +196,7 @@ watch -n 5 'az containerapp revision list \
 - Health: Healthy
 - Replicas: 2+ running
 
-**Checkpoint:** ✅ v12 deployed
+**Checkpoint:**  v12 deployed
 
 ---
 
@@ -235,9 +235,9 @@ curl -s https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/
 ```
 
 **Key checks:**
-- ✅ `status: "healthy"`
-- ✅ `database.status: "healthy"`
-- ✅ `background_tasks.data_processor: "running"`
+-  `status: "healthy"`
+-  `database.status: "healthy"`
+-  `background_tasks.data_processor: "running"`
 
 ### Test Ingestion Endpoint
 
@@ -278,8 +278,8 @@ curl -X POST \
 ```
 
 **Key check:**
-- ✅ Returns 202 Accepted
-- ✅ Returns ID number
+-  Returns 202 Accepted
+-  Returns ID number
 
 ### Verify Data Processing (Wait 30 seconds)
 
@@ -303,7 +303,7 @@ psql \
 ```
 
 **Key check:**
-- ✅ Count increased from 3 to 4 (test metric processed)
+-  Count increased from 3 to 4 (test metric processed)
 
 ### Check Application Logs
 
@@ -315,11 +315,11 @@ az containerapp logs show \
 ```
 
 **Look for:**
-- ✅ "📊 Data processor started"
-- ✅ "✅ Processed 1 records: ... 1 data points"
-- ❌ No ERROR messages
+-  " Data processor started"
+-  " Processed 1 records: ... 1 data points"
+-  No ERROR messages
 
-**Checkpoint:** ✅ v12 healthy and processing data
+**Checkpoint:**  v12 healthy and processing data
 
 ---
 
@@ -348,15 +348,15 @@ az containerapp logs show \
 After enabling, verify the collector settings show:
 
 ```properties
-✅ enable.collector.publisher=true
-✅ agent.publisher.name=http
-✅ publisher.http.url=https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/HttpIngest
-✅ agent.publisher.enable.auth=false
-✅ publisher.dequeue.count=1
-✅ collector.publisher.device.props=true
+ enable.collector.publisher=true
+ agent.publisher.name=http
+ publisher.http.url=https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/HttpIngest
+ agent.publisher.enable.auth=false
+ publisher.dequeue.count=1
+ collector.publisher.device.props=true
 ```
 
-**Checkpoint:** ✅ Collector Publisher ENABLED
+**Checkpoint:**  Collector Publisher ENABLED
 
 ---
 
@@ -384,10 +384,10 @@ watch -n 10 'PGPASSWORD=$(az account get-access-token --resource-type oss-rdbms 
 1. Open Azure Portal → Application Insights → httpdatapublisher
 2. Click "Live Metrics"
 3. Watch for:
-   - ✅ Incoming requests to /api/HttpIngest
-   - ✅ Request rate increasing
-   - ✅ Response time < 200ms
-   - ✅ Success rate 100%
+   -  Incoming requests to /api/HttpIngest
+   -  Request rate increasing
+   -  Response time < 200ms
+   -  Success rate 100%
 
 #### Monitor Container Logs
 
@@ -400,16 +400,16 @@ az containerapp logs show \
 
 **Look for:**
 ```
-✅ Processing OTLP data from LogicMonitor
-✅ Inserted metric batch [ID]
-✅ Processed N records: X resources, Y datasources, Z data points
+ Processing OTLP data from LogicMonitor
+ Inserted metric batch [ID]
+ Processed N records: X resources, Y datasources, Z data points
 ```
 
 **Red flags (should NOT see):**
 ```
-❌ Database error
-❌ Parsing failed
-❌ ERROR in data processor
+ Database error
+ Parsing failed
+ ERROR in data processor
 ```
 
 ### 15-Minute Check
@@ -438,9 +438,9 @@ SELECT
 ```
 
 **Key checks:**
-- ✅ processed ≈ raw_records (within 30 seconds)
-- ✅ failed = 0 (or very low)
-- ✅ datapoints growing steadily
+-  processed ≈ raw_records (within 30 seconds)
+-  failed = 0 (or very low)
+-  datapoints growing steadily
 
 ### 30-Minute Check
 
@@ -495,7 +495,7 @@ az monitor metrics alert list \
 
 **Expected:** No active alerts (all should be quiet)
 
-**Checkpoint:** ✅ Data flowing smoothly for 1 hour
+**Checkpoint:**  Data flowing smoothly for 1 hour
 
 ---
 
@@ -525,7 +525,7 @@ Requests/sec: 50+
 open results/load-tests/baseline_*.html
 ```
 
-**Checkpoint:** ✅ Load test passed
+**Checkpoint:**  Load test passed
 
 ---
 
@@ -558,16 +558,16 @@ SELECT 'processing_status (failed)', COUNT(*) FROM processing_status WHERE statu
 
 ```
 Before: 69/70 (98.5%)
-After:  70/70 (100%) ✅
+After:  70/70 (100%) 
 
 All tasks complete:
-✅ Environment configurations
-✅ Secret management
-✅ Monitoring dashboards
-✅ Alerts configured
-✅ API documentation
-✅ Operational runbooks
-✅ Load testing complete
+ Environment configurations
+ Secret management
+ Monitoring dashboards
+ Alerts configured
+ API documentation
+ Operational runbooks
+ Load testing complete
 ```
 
 ---
@@ -597,14 +597,14 @@ az containerapp revision activate \
 
 ## Success Criteria
 
-- ✅ v12 deployed successfully
-- ✅ Health endpoint returns healthy
-- ✅ LogicMonitor data flowing into lm_metrics
-- ✅ Background processor normalizing data
-- ✅ No errors in Application Insights
-- ✅ No alerts triggered
-- ✅ Load test passed
-- ✅ Data queryable via export endpoints
+-  v12 deployed successfully
+-  Health endpoint returns healthy
+-  LogicMonitor data flowing into lm_metrics
+-  Background processor normalizing data
+-  No errors in Application Insights
+-  No alerts triggered
+-  Load test passed
+-  Data queryable via export endpoints
 
 ---
 

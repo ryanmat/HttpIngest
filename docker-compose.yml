@@ -1,5 +1,5 @@
-# ABOUTME: Docker Compose configuration for LogicMonitor Data Pipeline local development
-# ABOUTME: Provides PostgreSQL database, Redis pub/sub, and the application service
+# Description: Docker Compose configuration for LogicMonitor Data Pipeline local development
+# Description: Provides PostgreSQL database, Redis pub/sub, and the application service
 
 version: '3.8'
 

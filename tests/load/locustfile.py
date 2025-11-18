@@ -1,5 +1,5 @@
-# ABOUTME: Load testing configuration for LogicMonitor Data Pipeline using Locust
-# ABOUTME: Tests OTLP ingestion, exports, and real-time streaming under load
+# Description: Load testing configuration for LogicMonitor Data Pipeline using Locust
+# Description: Tests OTLP ingestion, exports, and real-time streaming under load
 
 import json
 import gzip

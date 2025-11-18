@@ -1,5 +1,5 @@
-# ABOUTME: Data export and integration system for external monitoring tools
-# ABOUTME: Supports Prometheus, Grafana, PowerBI, CSV/JSON, and webhook notifications
+# Description: Data export and integration system for external monitoring tools
+# Description: Supports Prometheus, Grafana, PowerBI, CSV/JSON, and webhook notifications
 
 """
 Data Export and Integration System

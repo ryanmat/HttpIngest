@@ -1,5 +1,5 @@
-# ABOUTME: Tests for materialized views and their performance
-# ABOUTME: Verifies view creation, data accuracy, refresh functions, and query performance
+# Description: Tests for materialized views and their performance
+# Description: Verifies view creation, data accuracy, refresh functions, and query performance
 
 import pytest
 import json

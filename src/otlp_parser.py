@@ -1,5 +1,5 @@
-# ABOUTME: Parser for LogicMonitor OTLP (OpenTelemetry Protocol) JSON data
-# ABOUTME: Extracts resources, datasources, metrics, and time-series data for database insertion
+# Description: Parser for LogicMonitor OTLP (OpenTelemetry Protocol) JSON data
+# Description: Extracts resources, datasources, metrics, and time-series data for database insertion
 
 """
 OTLP Parser for LogicMonitor Data Pipeline

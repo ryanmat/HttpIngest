@@ -1,6 +1,6 @@
 #!/bin/bash
-# ABOUTME: Configuration script to update Container App with Redis connection details
-# ABOUTME: Run after Redis instance is provisioned
+# Description: Configuration script to update Container App with Redis connection details
+# Description: Run after Redis instance is provisioned
 
 set -e
 

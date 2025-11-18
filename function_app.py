@@ -1,9 +1,11 @@
+# Description: Azure Functions entry point for LogicMonitor OTLP data pipeline
+# Description: Provides HTTP ingestion, data processing, and export endpoints
+
 """
 LogicMonitor Data Pipeline - Unified Application
 
 Integrates all components:
 - OTLP data ingestion and normalization
-- ML pipeline (feature engineering, anomaly detection, forecasting)
 - Data export (Prometheus, Grafana, PowerBI, CSV/JSON)
 - Real-time streaming (WebSocket, SSE, Pub/Sub)
 - Background processing tasks

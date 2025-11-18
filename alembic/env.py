@@ -1,5 +1,5 @@
-# ABOUTME: Alembic environment configuration for LogicMonitor data pipeline
-# ABOUTME: Handles PostgreSQL connection with Azure AD token authentication
+# Description: Alembic environment configuration for LogicMonitor data pipeline
+# Description: Handles PostgreSQL connection with Azure AD token authentication
 
 from logging.config import fileConfig
 import os

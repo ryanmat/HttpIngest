@@ -1,7 +1,7 @@
-"""
-ABOUTME: FastAPI application optimized for Azure Container Apps deployment
-ABOUTME: Provides LogicMonitor OTLP ingestion without Azure Functions runtime dependency
+# Description: FastAPI application optimized for Azure Container Apps deployment
+# Description: Provides LogicMonitor OTLP ingestion without Azure Functions runtime dependency
 
+"""
 Integrates:
 - OTLP data ingestion and normalization
 - Data export (Prometheus, Grafana, PowerBI, CSV/JSON)

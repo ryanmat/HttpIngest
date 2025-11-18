@@ -1,5 +1,5 @@
-# ABOUTME: Comprehensive tests for OTLP parser module
-# ABOUTME: Validates parsing of resources, datasources, metrics, and time-series data
+# Description: Comprehensive tests for OTLP parser module
+# Description: Validates parsing of resources, datasources, metrics, and time-series data
 
 import pytest
 import json

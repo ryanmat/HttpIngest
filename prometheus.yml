@@ -1,5 +1,5 @@
-# ABOUTME: Prometheus configuration for scraping metrics from LogicMonitor Data Pipeline
-# ABOUTME: Scrapes the /metrics/prometheus endpoint every 15 seconds
+# Description: Prometheus configuration for scraping metrics from LogicMonitor Data Pipeline
+# Description: Scrapes the /metrics/prometheus endpoint every 15 seconds
 
 global:
   scrape_interval: 15s

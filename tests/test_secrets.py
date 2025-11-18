@@ -1,5 +1,5 @@
-# ABOUTME: Unit tests for Azure Key Vault secret management system
-# ABOUTME: Tests secret retrieval, caching, fallback, and Key Vault integration (mocked)
+# Description: Unit tests for Azure Key Vault secret management system
+# Description: Tests secret retrieval, caching, fallback, and Key Vault integration (mocked)
 
 import pytest
 import os

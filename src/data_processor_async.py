@@ -1,5 +1,5 @@
-# ABOUTME: Async data processor for converting raw lm_metrics to normalized OTLP tables
-# ABOUTME: Uses asyncpg for non-blocking database operations with connection pooling
+# Description: Async data processor for converting raw lm_metrics to normalized OTLP tables
+# Description: Uses asyncpg for non-blocking database operations with connection pooling
 
 """
 Async Data Processor for LogicMonitor OTLP Pipeline

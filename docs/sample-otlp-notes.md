@@ -2,7 +2,7 @@
 
 ## Current Status
 
-✅ **We have:** `tests/fixtures/sample_otlp.json`
+ **We have:** `tests/fixtures/sample_otlp.json`
 - Basic OTLP format example
 - Contains: gauge metric only
 - Shows: resource attributes, scope metadata, single data point

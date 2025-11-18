@@ -2,7 +2,7 @@
 
 ## Current Azure Subscription Configuration
 
-### ✅ Confirmed Existing Resources
+###  Confirmed Existing Resources
 
 All resources are in the **same subscription**:
 
@@ -15,7 +15,7 @@ All resources are in the **same subscription**:
 
 ### Existing Resources (All Confirmed)
 
-#### 1. Azure Container App ✅
+#### 1. Azure Container App 
 - **Name:** `ca-cta-lm-ingest`
 - **Environment:** `cae-cta-lm-ingest`
 - **FQDN:** `ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io`
@@ -23,14 +23,14 @@ All resources are in the **same subscription**:
 - **Current Status:** Running
 - **Current Version:** v10 (per CLAUDE.md)
 
-#### 2. Azure Container Registry ✅
+#### 2. Azure Container Registry 
 - **Name:** `acrctalmhttps001`
 - **Server:** `acrctalmhttps001.azurecr.io`
 - **Image Repository:** `lm-http-ingest`
 - **Current Image:** `lm-http-ingest:latest`
 - **Authentication:** Secret-based (stored in Container App)
 
-#### 3. Azure PostgreSQL Flexible Server ✅
+#### 3. Azure PostgreSQL Flexible Server 
 - **Host:** `rm-postgres.postgres.database.azure.com`
 - **Database:** `postgres`
 - **Version:** PostgreSQL 17.5
@@ -40,9 +40,9 @@ All resources are in the **same subscription**:
 
 ---
 
-### ⚠️ NEW Resource Required: Azure Cache for Redis
+###  NEW Resource Required: Azure Cache for Redis
 
-**Current Status:** ❌ **NOT CONFIGURED** - Using placeholder
+**Current Status:**  **NOT CONFIGURED** - Using placeholder
 
 **Current Configuration:**
 ```yaml
@@ -126,7 +126,7 @@ az containerapp update \
 
 ### Current Environment Variables
 
-#### ✅ Correct (Existing Resources)
+####  Correct (Existing Resources)
 ```yaml
 # Database
 POSTGRES_HOST: rm-postgres.postgres.database.azure.com
@@ -146,7 +146,7 @@ PYTHONUNBUFFERED: 1
 FUNCTIONS_WORKER_RUNTIME: python
 ```
 
-#### ⚠️ Needs Decision (Redis)
+####  Needs Decision (Redis)
 ```yaml
 # Option A: Use Azure Cache for Redis (after provisioning)
 REDIS_URL: rediss://:XXXXX@lm-data-pipeline-redis.redis.cache.windows.net:6380
@@ -157,7 +157,7 @@ REDIS_URL: redis://localhost:6379  # ignored when USE_REDIS=false
 USE_REDIS: false
 ```
 
-#### ✅ New Configuration (Already Added)
+####  New Configuration (Already Added)
 ```yaml
 # Real-time Streaming
 MAX_WEBSOCKET_CONNECTIONS: 500
@@ -186,7 +186,7 @@ scale:
         concurrentRequests: 100
 ```
 
-### ⚠️ Scaling Consideration
+###  Scaling Consideration
 
 **If using in-memory Redis fallback (Option B):**
 - **MUST set:** `minReplicas: 1, maxReplicas: 1`
@@ -200,18 +200,18 @@ scale:
 
 ## Resources Summary
 
-### ✅ Same Subscription - Confirmed
+###  Same Subscription - Confirmed
 - **Subscription:** 1eae27d8-cbaa-43fd-9f60-ce33de2c69b6
 - **Resource Group:** CTA_Resource_Group
 - **Region:** East US
 
-### ✅ Existing Resources (No Changes Needed)
+###  Existing Resources (No Changes Needed)
 1. Container App: `ca-cta-lm-ingest`
 2. Container Registry: `acrctalmhttps001`
 3. PostgreSQL: `rm-postgres`
 4. Managed Environment: `cae-cta-lm-ingest`
 
-### ⚠️ Decision Required
+###  Decision Required
 **Redis for Pub/Sub:** Choose Option A or B above
 
 ---
@@ -287,9 +287,9 @@ az postgres flexible-server show \
 
 ## Conclusion
 
-✅ **All existing resources are in the same Azure subscription**
-✅ **No changes to existing resources needed**
-⚠️ **Decision needed on Redis configuration before deployment**
+ **All existing resources are in the same Azure subscription**
+ **No changes to existing resources needed**
+ **Decision needed on Redis configuration before deployment**
 
 **Recommendation:**
 - For **immediate testing**: Use in-memory (Path 1)

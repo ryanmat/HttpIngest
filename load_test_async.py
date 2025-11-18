@@ -1,7 +1,5 @@
-"""
-ABOUTME: Load test script for async HTTP ingestion endpoint
-ABOUTME: Sends concurrent OTLP requests and measures response times
-"""
+# Description: Load test script for async HTTP ingestion endpoint
+# Description: Sends concurrent OTLP requests and measures response times
 
 import asyncio
 import aiohttp

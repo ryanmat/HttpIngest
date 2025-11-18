@@ -1,6 +1,6 @@
 #!/bin/bash
-# ABOUTME: Set up Application Insights monitoring dashboards and alerts for LogicMonitor Data Pipeline
-# ABOUTME: Creates custom dashboards, metric alerts, and log-based alerts
+# Description: Set up Application Insights monitoring dashboards and alerts for LogicMonitor Data Pipeline
+# Description: Creates custom dashboards, metric alerts, and log-based alerts
 
 set -e
 

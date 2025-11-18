@@ -1,5 +1,5 @@
-# ABOUTME: Tests to verify pytest infrastructure and fixtures work correctly
-# ABOUTME: Validates database connections, sample data loading, and test isolation
+# Description: Tests to verify pytest infrastructure and fixtures work correctly
+# Description: Validates database connections, sample data loading, and test isolation
 
 import pytest
 import json

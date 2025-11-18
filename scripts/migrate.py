@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# ABOUTME: Safe database migration helper script for LogicMonitor data pipeline
-# ABOUTME: Provides migration status, upgrade, downgrade, and rollback with safety checks
+# Description: Safe database migration helper script for LogicMonitor data pipeline
+# Description: Provides migration status, upgrade, downgrade, and rollback with safety checks
 
 """
 Database Migration Helper

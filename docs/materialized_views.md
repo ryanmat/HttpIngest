@@ -205,10 +205,10 @@ SELECT refresh_hourly_aggregates();
 
 ### Concurrent Refresh
 All refresh operations use `REFRESH MATERIALIZED VIEW CONCURRENTLY`, which:
-- ✅ Allows queries while refreshing
-- ✅ Doesn't block readers
-- ✅ Maintains availability
-- ⚠️  Requires unique indexes (already created)
+-  Allows queries while refreshing
+-  Doesn't block readers
+-  Maintains availability
+-   Requires unique indexes (already created)
 
 ### Refresh Strategy
 Recommended refresh schedule:

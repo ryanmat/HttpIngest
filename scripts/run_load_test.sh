@@ -1,6 +1,6 @@
 #!/bin/bash
-# ABOUTME: Quick load test runner for LogicMonitor Data Pipeline
-# ABOUTME: Runs baseline or custom load test with Locust
+# Description: Quick load test runner for LogicMonitor Data Pipeline
+# Description: Runs baseline or custom load test with Locust
 
 set -e
 

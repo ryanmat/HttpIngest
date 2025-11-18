@@ -1,5 +1,5 @@
-# ABOUTME: Multi-stage Dockerfile for LogicMonitor Data Pipeline
-# ABOUTME: Uses uv for fast Python dependency management and supports Azure Functions + FastAPI
+# Description: Multi-stage Dockerfile for LogicMonitor Data Pipeline
+# Description: Uses uv for fast Python dependency management and supports Azure Functions + FastAPI
 
 # Builder stage - install dependencies with uv
 FROM python:3.12-slim AS builder

@@ -1,5 +1,5 @@
-# ABOUTME: Pytest configuration and fixtures for LogicMonitor data pipeline tests
-# ABOUTME: Provides database connections, sample data, cleanup, and mocked authentication
+# Description: Pytest configuration and fixtures for LogicMonitor data pipeline tests
+# Description: Provides database connections, sample data, cleanup, and mocked authentication
 
 import pytest
 import psycopg2

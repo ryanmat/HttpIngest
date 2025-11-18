@@ -1,5 +1,5 @@
-# ABOUTME: Dockerfile optimized for Azure Container Apps deployment
-# ABOUTME: Uses standard Python image with uv and runs FastAPI directly via uvicorn
+# Description: Dockerfile optimized for Azure Container Apps deployment
+# Description: Uses standard Python image with uv and runs FastAPI directly via uvicorn
 
 # Builder stage - install dependencies with uv
 FROM python:3.12-slim AS builder

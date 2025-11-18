@@ -1,5 +1,5 @@
-# ABOUTME: Environment-specific configuration management for LogicMonitor Data Pipeline
-# ABOUTME: Supports dev, staging, and production environments with validation
+# Description: Environment-specific configuration management for LogicMonitor Data Pipeline
+# Description: Supports dev, staging, and production environments with validation
 
 import os
 from typing import Optional, Literal

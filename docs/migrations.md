@@ -294,13 +294,13 @@ uv run pytest tests/test_migrations.py::test_migration_upgrade_creates_table -v
 
 The test suite verifies:
 
-- ✅ Configuration files exist
-- ✅ Migration files are valid
-- ✅ Upgrade creates tables correctly
-- ✅ Upgrade preserves existing data
-- ✅ Downgrade preserves data (safety)
-- ✅ Migration history tracking
-- ✅ Helper script functionality
+-  Configuration files exist
+-  Migration files are valid
+-  Upgrade creates tables correctly
+-  Upgrade preserves existing data
+-  Downgrade preserves data (safety)
+-  Migration history tracking
+-  Helper script functionality
 
 ## Troubleshooting
 

@@ -1,5 +1,5 @@
-# ABOUTME: Unit tests for environment configuration management
-# ABOUTME: Tests config loading, validation, and environment-specific behaviors
+# Description: Unit tests for environment configuration management
+# Description: Tests config loading, validation, and environment-specific behaviors
 
 import pytest
 import os

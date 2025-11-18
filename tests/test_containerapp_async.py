@@ -1,7 +1,5 @@
-"""
-ABOUTME: Tests for async containerapp endpoints with connection pooling
-ABOUTME: Verifies performance improvements from async database operations
-"""
+# Description: Tests for async containerapp endpoints with connection pooling
+# Description: Verifies performance improvements from async database operations
 
 import pytest
 import pytest_asyncio

@@ -1,5 +1,5 @@
-# ABOUTME: Tests for normalized OTLP schema created by migration
-# ABOUTME: Validates table structure, foreign keys, indexes, and data storage
+# Description: Tests for normalized OTLP schema created by migration
+# Description: Validates table structure, foreign keys, indexes, and data storage
 
 import pytest
 import json

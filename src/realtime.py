@@ -1,5 +1,5 @@
-# ABOUTME: Real-time streaming system for live metric updates
-# ABOUTME: Supports WebSocket, SSE, pub/sub with rate limiting and reconnection handling
+# Description: Real-time streaming system for live metric updates
+# Description: Supports WebSocket, SSE, pub/sub with rate limiting and reconnection handling
 
 """
 Real-Time Streaming System

@@ -6,13 +6,13 @@ The OTLP (OpenTelemetry Protocol) parser extracts and normalizes LogicMonitor me
 
 ## Features
 
-✅ **Pure Functions** - No side effects, easy to test
-✅ **Type Safety** - Uses dataclasses for structured output
-✅ **Complete Parsing** - Handles resources, datasources, metrics, and time-series data
-✅ **Flexible** - Supports all OTLP metric types (gauge, sum, histogram, etc.)
-✅ **Timestamp Conversion** - Converts nanosecond timestamps to Python datetime
-✅ **Deduplication** - Built-in deduplication helpers
-✅ **Error Handling** - Validates input and provides clear error messages
+ **Pure Functions** - No side effects, easy to test
+ **Type Safety** - Uses dataclasses for structured output
+ **Complete Parsing** - Handles resources, datasources, metrics, and time-series data
+ **Flexible** - Supports all OTLP metric types (gauge, sum, histogram, etc.)
+ **Timestamp Conversion** - Converts nanosecond timestamps to Python datetime
+ **Deduplication** - Built-in deduplication helpers
+ **Error Handling** - Validates input and provides clear error messages
 
 ## Quick Start
 
@@ -183,11 +183,11 @@ The parser expects OTLP JSON in this format:
 
 The parser supports all OTLP metric types:
 
-- ✅ **gauge** - Point-in-time measurements
-- ✅ **sum** - Cumulative or delta sums
-- ✅ **histogram** - Distribution of values
-- ✅ **summary** - Quantile summaries
-- ✅ **exponentialHistogram** - Exponentially-bucketed histograms
+-  **gauge** - Point-in-time measurements
+-  **sum** - Cumulative or delta sums
+-  **histogram** - Distribution of values
+-  **summary** - Quantile summaries
+-  **exponentialHistogram** - Exponentially-bucketed histograms
 
 ## Functions
 
@@ -348,17 +348,17 @@ uv run pytest tests/test_otlp_parser.py --cov=src.otlp_parser
 ```
 
 Test coverage includes:
-- ✅ Attribute value extraction (string, int, double, bool)
-- ✅ Resource attribute parsing
-- ✅ Resource hash computation and consistency
-- ✅ Timestamp conversion with precision
-- ✅ Data point parsing (double and int values)
-- ✅ Metric parsing (gauge, sum, unknown types)
-- ✅ Scope metrics parsing
-- ✅ Complete OTLP payload parsing
-- ✅ Deduplication functions
-- ✅ Error handling
-- ✅ Multiple resources and metrics
+-  Attribute value extraction (string, int, double, bool)
+-  Resource attribute parsing
+-  Resource hash computation and consistency
+-  Timestamp conversion with precision
+-  Data point parsing (double and int values)
+-  Metric parsing (gauge, sum, unknown types)
+-  Scope metrics parsing
+-  Complete OTLP payload parsing
+-  Deduplication functions
+-  Error handling
+-  Multiple resources and metrics
 
 ## Error Handling
 

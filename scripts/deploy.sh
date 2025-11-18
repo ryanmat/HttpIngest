@@ -1,6 +1,6 @@
 #!/bin/bash
-# ABOUTME: Automated deployment script for Azure Container App
-# ABOUTME: Builds Docker image in ACR and deploys to container app with fresh Azure AD token
+# Description: Automated deployment script for Azure Container App
+# Description: Builds Docker image in ACR and deploys to container app with fresh Azure AD token
 
 set -e  # Exit on error
 

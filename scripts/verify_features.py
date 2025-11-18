@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# ABOUTME: Feature verification script for LogicMonitor Data Pipeline
-# ABOUTME: Verifies all features are accessible and identifies orphaned code
+# Description: Feature verification script for LogicMonitor Data Pipeline
+# Description: Verifies all features are accessible and identifies orphaned code
 
 import os
 import sys

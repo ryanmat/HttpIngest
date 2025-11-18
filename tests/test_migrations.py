@@ -1,5 +1,5 @@
-# ABOUTME: Tests for database migration system using Alembic
-# ABOUTME: Verifies migration up/down functionality and safety checks
+# Description: Tests for database migration system using Alembic
+# Description: Verifies migration up/down functionality and safety checks
 
 import pytest
 import subprocess
@@ -144,7 +144,7 @@ def test_migration_upgrade_preserves_existing_table(db_connection, clean_alembic
     """Test that migration upgrade preserves existing lm_metrics table."""
     # Create lm_metrics table with test data
     with db_connection.cursor() as cur:
-        cur.execute("DROP TABLE IF EXISTS lm_metrics")
+        cur.execute("DROP TABLE IF EXISTS lm_metrics CASCADE")
         cur.execute("""
             CREATE TABLE lm_metrics (
                 id SERIAL PRIMARY KEY,

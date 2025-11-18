@@ -1,5 +1,5 @@
-# ABOUTME: Secret management system using Azure Key Vault for production credentials
-# ABOUTME: Supports local development with environment variables and production with Key Vault
+# Description: Secret management system using Azure Key Vault for production credentials
+# Description: Supports local development with environment variables and production with Key Vault
 
 import os
 import logging
