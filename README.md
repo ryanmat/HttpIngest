@@ -12,7 +12,7 @@ Async data pipeline for ingesting, normalizing, and exporting OTLP formatted JSO
 **Components:**
 - Azure Container Apps (async Python FastAPI application)
 - Azure PostgreSQL Flexible Server (normalized schema with materialized views)
-- Azure Managed Identity 
+- Azure Managed Identity
 - Background processing
 
 **Data Flow:**
@@ -20,7 +20,6 @@ Async data pipeline for ingesting, normalizing, and exporting OTLP formatted JSO
 LogicMonitor Collector → HTTPS Publisher → Container App (/api/HttpIngest)
     → PostgreSQL (normalized schema) → Materialized Views
     → Export APIs (Prometheus, Grafana, PowerBI, CSV/JSON)
-    → Real-time Streaming (WebSocket/SSE)
 ```
 
 **Key Features:**
@@ -28,14 +27,9 @@ LogicMonitor Collector → HTTPS Publisher → Container App (/api/HttpIngest)
 - Normalized database schema (resources, datasources, metrics, data points)
 - Materialized views for aggregation (hourly, latest, resource summaries)
 - Multiple export formats (Prometheus, Grafana SimpleJSON, PowerBI OData, CSV/JSON)
-- Real-time streaming (WebSocket, Server-Sent Events) with REDIS
 - Managed identity authentication (no password storage)
 - Auto-scaling (3-10 replicas based on load)
 - Gzip compression support
-
-## Note on LLM Models
-
-There is always a big debate on letting LLM's touch your code.  Personally, for me, I have Claude run my testing for me.  This allows me to streamline the tests being ran while seeing any recommendations for improvements.
 
 ## Prerequisites
 
@@ -43,7 +37,7 @@ There is always a big debate on letting LLM's touch your code.  Personally, for 
 - LogicMonitor account with Collector HTTPS Publisher enabled
 - Azure CLI (`az`) version 2.50+
 - Docker (for local development)
-- Python 3.10+ with `uv` package manager
+- Python 3.12+ with `uv` package manager
 
 ## Database Setup
 
@@ -88,55 +82,54 @@ uv run alembic upgrade head
 POSTGRES_HOST=postgres-server.postgres.database.azure.com
 POSTGRES_PORT=5432
 POSTGRES_DB=postgres
-POSTGRES_USER=azuread_user@example.com
-USE_MANAGED_IDENTITY=true  # Use Azure AD authentication
+POSTGRES_USER=managed-identity-principal-name
+USE_MANAGED_IDENTITY=true
 
 # Application
-ENVIRONMENT=production  # development, staging, production
+ENVIRONMENT=production
 ```
 
 ### Optional
 
 ```bash
-# Redis (optional, for distributed caching)
-USE_REDIS=false
-REDIS_URL=redis://localhost:6379
-
 # Background Tasks
-ENABLE_COLLECTOR_PUBLISHER=true
 DATA_PROCESSING_INTERVAL=30  # seconds
 HEALTH_MONITORING_INTERVAL=60  # seconds
-
-# Streaming
-MAX_WEBSOCKET_CONNECTIONS=100
 
 # Application Insights
 APPINSIGHTS_CONNECTION_STRING=InstrumentationKey=...
 
 # Security
-API_KEYS=key1,key2,key3  # Comma-separated
 REQUIRE_HTTPS=true
-CORS_ORIGINS=*  # Or specific origins
+CORS_ORIGINS=*
 ```
 
 ## Deployment
 
-### Automated CI/CD with Azure DevOps
+### Manual Deployment
 
-For automated deployments using Azure DevOps pipelines:
-- **Setup Guide**: See [azure-devops/SETUP.md](azure-devops/SETUP.md)
-- **Quick Checklist**: See [azure-devops/CHECKLIST.md](azure-devops/CHECKLIST.md)
-- **Pipeline**: [azure-devops/azure-pipelines.yml](azure-devops/azure-pipelines.yml)
+Use the deployment script for Container Apps:
 
-### Manual Deployment - Azure Container App
+```bash
+# Deploy specific version
+./scripts/deploy.sh v13.3 main
+
+# Script will:
+# - Build Docker image in ACR from GitHub
+# - Get fresh Azure AD token
+# - Deploy to Container App
+# - Run health checks
+```
+
+### Manual ACR Build
 
 ```bash
 # Set variables
-RESOURCE_GROUP="CTA_Resource_Group"
-CONTAINER_APP="lm-ingest-app"
-ACR_NAME="acrctalmhttps001"
+RESOURCE_GROUP="resource-group-name"
+CONTAINER_APP="container-app-name"
+ACR_NAME="registry-name"
 IMAGE_NAME="lm-http-ingest"
-VERSION="v12.4"
+VERSION="v13.3"
 
 # Build and push image to ACR
 az acr build \
@@ -153,7 +146,6 @@ az containerapp update \
   --image $ACR_NAME.azurecr.io/$IMAGE_NAME:$VERSION \
   --set-env-vars \
     "USE_MANAGED_IDENTITY=true" \
-    "ENABLE_COLLECTOR_PUBLISHER=true" \
   --revision-suffix $VERSION
 ```
 
@@ -197,42 +189,31 @@ curl -X POST https://your-app.azurecontainerapps.io/api/HttpIngest \
   --data-binary @otlp_payload.json.gz
 ```
 
-### Query Endpoints
+### Health and Monitoring
 
 ```bash
 # Health check
 curl https://your-app.azurecontainerapps.io/api/health
-
-# List all metrics
-curl https://your-app.azurecontainerapps.io/api/metrics
-
-# Metrics summary
-curl https://your-app.azurecontainerapps.io/api/metrics/summary
 ```
 
 ### Export Endpoints
 
 ```bash
-# Prometheus format (last 24 hours)
-curl "https://your-app.azurecontainerapps.io/metrics/prometheus?hours=24"
+# Prometheus format
+curl "https://your-app.azurecontainerapps.io/metrics"
 
-# CSV export (specific metric)
-curl "https://your-app.azurecontainerapps.io/export/csv?metrics=cpu.usage&hours=1" -o metrics.csv
+# CSV export
+curl "https://your-app.azurecontainerapps.io/export/csv?start_time=2025-01-01T00:00:00Z" -o metrics.csv
 
 # JSON export
-curl "https://your-app.azurecontainerapps.io/export/json?metrics=cpu.usage,memory.usage&hours=24" -o metrics.json
+curl "https://your-app.azurecontainerapps.io/export/json?start_time=2025-01-01T00:00:00Z" -o metrics.json
 ```
 
 ### Grafana SimpleJSON Datasource
 
 ```bash
-# Health check
-curl https://your-app.azurecontainerapps.io/grafana/
-
 # Search metrics
-curl -X POST https://your-app.azurecontainerapps.io/grafana/search \
-  -H "Content-Type: application/json" \
-  -d '{"target": "cpu"}'
+curl -X POST https://your-app.azurecontainerapps.io/grafana/search
 
 # Query time series
 curl -X POST https://your-app.azurecontainerapps.io/grafana/query \
@@ -242,19 +223,15 @@ curl -X POST https://your-app.azurecontainerapps.io/grafana/query \
     "range": {
       "from": "2025-01-01T00:00:00Z",
       "to": "2025-01-01T23:59:59Z"
-    },
-    "maxDataPoints": 1000
+    }
   }'
 ```
 
-### PowerBI OData
+### PowerBI Export
 
 ```bash
-# Get OData metadata
-curl https://your-app.azurecontainerapps.io/powerbi/\$metadata
-
-# Query metrics (OData format)
-curl "https://your-app.azurecontainerapps.io/powerbi/metrics?\$filter=metric_name eq 'cpu.usage'&\$top=1000"
+# Export data for PowerBI
+curl "https://your-app.azurecontainerapps.io/export/powerbi?start_time=2025-01-01T00:00:00Z"
 ```
 
 ## LogicMonitor Configuration
@@ -287,12 +264,12 @@ Restart collector after configuration changes.
 1. Get Data → PostgreSQL Database
 2. Server: `postgres-server.postgres.database.azure.com`
 3. Database: `postgres`
-4. Authentication: Azure AD (with managed identity) or Username/Password
+4. Authentication: Azure AD
 
-**Option 2: OData Feed**
-1. Get Data → OData Feed
-2. URL: `https://your-app.azurecontainerapps.io/powerbi`
-3. Select tables and load data
+**Option 2: Export Endpoint**
+1. Use `/export/powerbi` endpoint
+2. Import JSON response into PowerBI
+3. Set up scheduled refresh
 
 ### Prometheus Scraping
 
@@ -302,9 +279,7 @@ Add scrape configuration to `prometheus.yml`:
 scrape_configs:
   - job_name: 'logicmonitor'
     scrape_interval: 60s
-    metrics_path: '/metrics/prometheus'
-    params:
-      hours: ['1']  # Last hour of data
+    metrics_path: '/metrics'
     static_configs:
       - targets: ['your-app.azurecontainerapps.io']
 ```
@@ -321,9 +296,9 @@ cd HttpIngest
 # Install dependencies
 uv sync
 
-# Set up local environment variables
-cp local.settings.json.example local.settings.json
-# Edit local.settings.json with your database credentials
+# Copy environment example
+cp .env.example .env
+# Edit .env with your database credentials
 
 # Run database migrations
 uv run alembic upgrade head
@@ -375,6 +350,7 @@ Response:
 {
   "status": "healthy",
   "timestamp": "2025-01-16T20:26:03.518041",
+  "version": "13.1-no-streaming",
   "components": {
     "database": "healthy",
     "background_tasks": "3/3 running"
@@ -388,37 +364,36 @@ Application automatically logs to Application Insights when `APPINSIGHTS_CONNECT
 - Request/response metrics
 - Exception tracking
 - Custom metrics (processing rate, queue depth)
-- Dependency tracking (database, external APIs)
+- Dependency tracking (database)
 
 ### Container App Logs
 
 ```bash
 # Stream logs
 az containerapp logs show \
-  --name lm-ingest-app \
-  --resource-group CTA_Resource_Group \
+  --name container-app-name \
+  --resource-group resource-group-name \
   --follow
 
 # Query specific errors
 az containerapp logs show \
-  --name lm-ingest-app \
-  --resource-group CTA_Resource_Group \
+  --name container-app-name \
+  --resource-group resource-group-name \
   --tail 100 | grep ERROR
 ```
 
 ## Performance
 
-**Current Production Metrics (v12.4):**
+**Current Production Metrics:**
 - Processing rate: 35-50 records/min per replica
 - Auto-scaling: 3-10 replicas based on load
-- Database pool: 10 connections per replica
+- Database pool: 5-20 connections per replica
 - Response time: <100ms for ingestion endpoint
 - Materialized view refresh: On-demand or scheduled
 
 **Optimization Tips:**
-- Enable Redis for distributed caching
-- Increase `DATA_PROCESSING_INTERVAL` to batch larger amounts
-- Scale replicas horizontally for increased throughput
+- Increase batch size for higher throughput
+- Scale replicas horizontally for increased load
 - Use materialized views for frequently accessed aggregations
 - Enable gzip compression for OTLP payloads
 
@@ -441,7 +416,7 @@ CREATE TABLE resources (
 ```sql
 CREATE TABLE metric_data (
     id BIGSERIAL PRIMARY KEY,
-    metric_def_id BIGINT REFERENCES metric_definitions(id),
+    metric_definition_id BIGINT REFERENCES metric_definitions(id),
     resource_id BIGINT REFERENCES resources(id),
     datasource_id BIGINT REFERENCES datasources(id),
     timestamp TIMESTAMPTZ NOT NULL,
@@ -450,25 +425,57 @@ CREATE TABLE metric_data (
     attributes JSONB
 );
 CREATE INDEX idx_metric_data_timestamp ON metric_data(timestamp);
-CREATE INDEX idx_metric_data_metric_def ON metric_data(metric_def_id);
+CREATE INDEX idx_metric_data_metric_definition ON metric_data(metric_definition_id);
 ```
 
 ### Materialized Views
 ```sql
--- Hourly aggregates
 CREATE MATERIALIZED VIEW hourly_aggregates AS
 SELECT
     date_trunc('hour', timestamp) AS hour,
-    metric_def_id,
+    metric_definition_id,
     resource_id,
     COUNT(*) AS count,
     AVG(COALESCE(value_double, value_int)) AS avg_value,
     MIN(COALESCE(value_double, value_int)) AS min_value,
     MAX(COALESCE(value_double, value_int)) AS max_value
 FROM metric_data
-GROUP BY date_trunc('hour', timestamp), metric_def_id, resource_id;
+GROUP BY date_trunc('hour', timestamp), metric_definition_id, resource_id;
 
 CREATE INDEX idx_hourly_aggregates_hour ON hourly_aggregates(hour);
+```
+
+## Project Structure
+
+```
+.
+├── containerapp_main.py      # FastAPI application entry point
+├── Dockerfile.containerapp   # Container image build file
+├── pyproject.toml           # Python dependencies
+├── uv.lock                  # Locked dependencies
+├── alembic.ini             # Database migration config
+├── alembic/                # Database migrations
+│   └── versions/
+├── src/                    # Source code
+│   ├── config.py           # Configuration management
+│   ├── data_processor_async.py  # Async data processing
+│   ├── exporters.py        # Export format handlers
+│   ├── otlp_parser.py      # OTLP parsing logic
+│   └── secrets.py          # Secret management
+├── scripts/                # Deployment and utility scripts
+│   ├── deploy.sh           # Automated deployment
+│   ├── migrate.py          # Migration helper
+│   └── verify_features.py  # Feature verification
+├── tests/                  # Test suite
+│   ├── conftest.py
+│   ├── fixtures/
+│   ├── load/
+│   └── test_*.py
+└── docs/                   # Documentation
+    ├── api-documentation.md
+    ├── deployment.md
+    ├── migrations.md
+    └── otlp_parser.md
 ```
 
 ## Troubleshooting
@@ -479,8 +486,8 @@ Managed identity tokens expire after 90 minutes. Application automatically refre
 **Manual token refresh:**
 ```bash
 az containerapp restart \
-  --name lm-ingest-app \
-  --resource-group CTA_Resource_Group
+  --name container-app-name \
+  --resource-group resource-group-name
 ```
 
 ### Database Connection Issues
@@ -488,26 +495,32 @@ Check managed identity permissions:
 ```bash
 # Verify Azure AD admin
 az postgres flexible-server ad-admin list \
-  --resource-group CTA_Resource_Group \
+  --resource-group resource-group-name \
   --server-name postgres-server
 ```
 
-### Collector Publisher Not Processing
+### Background Task Issues
 Check background task status:
 ```bash
 # View environment variables
 az containerapp show \
-  --name lm-ingest-app \
-  --resource-group CTA_Resource_Group \
+  --name container-app-name \
+  --resource-group resource-group-name \
   --query "properties.template.containers[0].env"
-
-# Verify ENABLE_COLLECTOR_PUBLISHER=true
 ```
 
 ### High Memory Usage
-Adjust connection pool settings:
+Adjust connection pool settings in containerapp_main.py:
 ```python
-# In containerapp_main.py or via environment variables
-DATABASE_POOL_SIZE=10  # Reduce if needed
-DATABASE_MAX_OVERFLOW=20
+# Database pool configuration
+db_pool = await asyncpg.create_pool(
+    **db_params,
+    min_size=5,    # Reduce if needed
+    max_size=20,   # Reduce if needed
+    command_timeout=60
+)
 ```
+
+## License
+
+See LICENSE file for details.
