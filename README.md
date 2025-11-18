@@ -31,6 +31,10 @@ LogicMonitor Collector → HTTPS Publisher → Container App (/api/HttpIngest)
 - Auto-scaling (3-10 replicas based on load)
 - Gzip compression support
 
+## Note on LLM Models
+
+There is always a big debate on letting LLM's touch your code. Personally, for me, I have Claude run my testing for me. This allows me to streamline the tests being ran while seeing any recommendations for improvements.
+
 ## Prerequisites
 
 - Azure subscription with Container Apps and PostgreSQL Flexible Server
