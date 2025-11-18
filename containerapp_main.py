@@ -5,7 +5,6 @@
 Integrates:
 - OTLP data ingestion and normalization
 - Data export (Prometheus, Grafana, PowerBI, CSV/JSON)
-- Real-time streaming (WebSocket, SSE, Pub/Sub)
 - Background processing tasks
 - Health monitoring and metrics
 """
@@ -24,9 +23,8 @@ from contextlib import asynccontextmanager
 import asyncpg
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Response, Request
+from fastapi import FastAPI, Query, Response, Request
 from fastapi.responses import StreamingResponse, JSONResponse
-from sse_starlette.sse import EventSourceResponse
 from azure.identity.aio import DefaultAzureCredential
 
 # Import our components
@@ -35,15 +33,7 @@ from src.exporters import (
     GrafanaSimpleJSONDataSource,
     PowerBIExporter,
     CSVJSONExporter,
-    WebhookNotifier,
-    TimeSeriesQuery,
-    AlertEvent,
-    WebhookConfig
-)
-from src.realtime import (
-    RealtimeStreamManager,
-    websocket_endpoint,
-    sse_endpoint
+    TimeSeriesQuery
 )
 from src.otlp_parser import parse_otlp
 from src.data_processor_async import AsyncDataProcessor
@@ -60,7 +50,6 @@ logger = logging.getLogger(__name__)
 
 # Global state
 db_pool: Optional[asyncpg.Pool] = None
-stream_manager: Optional[RealtimeStreamManager] = None
 background_tasks: Dict[str, asyncio.Task] = {}
 shutdown_event = asyncio.Event()
 
@@ -116,9 +105,9 @@ async def lifespan(app: FastAPI):
 
     Handles startup and shutdown of services.
     """
-    logger.info("🚀 Starting LogicMonitor Data Pipeline...")
+    logger.info("Starting LogicMonitor Data Pipeline...")
 
-    global db_pool, stream_manager, background_tasks
+    global db_pool, background_tasks
 
     # Initialize database connection pool
     # If using managed identity, get token first
@@ -130,7 +119,7 @@ async def lifespan(app: FastAPI):
             credential = DefaultAzureCredential()
             token = await credential.get_token("https://ossrdbms-aad.database.windows.net/.default")
             os.environ["POSTGRES_PASSWORD"] = token.token
-            logger.info("🔑 Obtained initial Azure AD token for PostgreSQL")
+            logger.info("Obtained initial Azure AD token for PostgreSQL")
 
         db_params = get_db_connection_params()
         db_pool = await asyncpg.create_pool(
@@ -139,25 +128,10 @@ async def lifespan(app: FastAPI):
             max_size=20,
             command_timeout=60
         )
-        logger.info("✅ Database connection pool initialized (5-20 connections)")
+        logger.info("Database connection pool initialized (5-20 connections)")
     except Exception as e:
-        logger.error(f"❌ Failed to initialize database pool: {e}")
+        logger.error(f"Failed to initialize database pool: {e}")
         db_pool = None
-
-    # Initialize real-time streaming
-    try:
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-        use_redis = os.getenv("USE_REDIS", "false").lower() == "true"
-
-        stream_manager = RealtimeStreamManager(
-            redis_url=redis_url,
-            use_redis=use_redis
-        )
-        await stream_manager.connect()
-        logger.info("✅ Real-time streaming initialized")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize streaming: {e}")
-        stream_manager = None
 
     # Start background tasks
     try:
@@ -180,18 +154,14 @@ async def lifespan(app: FastAPI):
         try:
             await task
         except asyncio.CancelledError:
-            logger.info(f"✅ Cancelled {task_name}")
-
-    # Disconnect streaming
-    if stream_manager:
-        await stream_manager.disconnect()
+            logger.info(f"Cancelled {task_name}")
 
     # Close database pool
     if db_pool:
         await db_pool.close()
-        logger.info("✅ Database pool closed")
+        logger.info("Database pool closed")
 
-    logger.info("👋 Shutdown complete")
+    logger.info("Shutdown complete")
 
 # Create FastAPI app
 app = FastAPI(
@@ -334,12 +304,6 @@ async def health_check():
         health_status["components"]["database"] = f"unhealthy: {str(e)}"
         health_status["status"] = "degraded"
 
-    # Check streaming
-    if stream_manager:
-        health_status["components"]["streaming"] = "healthy"
-    else:
-        health_status["components"]["streaming"] = "not initialized"
-
     # Check background tasks
     running_tasks = sum(1 for t in background_tasks.values() if not t.done())
     health_status["components"]["background_tasks"] = f"{running_tasks}/{len(background_tasks)} running"
@@ -402,14 +366,7 @@ async def http_ingest(request: Request):
                 datetime.now()
             )
 
-        logger.info(f"✅ Ingested metric {metric_id}")
-
-        # Publish to real-time streams if enabled
-        if stream_manager and stream_manager.use_redis:
-            try:
-                await stream_manager.publish_metric(payload)
-            except Exception as e:
-                logger.warning(f"Failed to publish to stream: {e}")
+        logger.info(f"Ingested metric {metric_id}")
 
         return JSONResponse(
             content={
@@ -421,7 +378,7 @@ async def http_ingest(request: Request):
         )
 
     except Exception as e:
-        logger.error(f"❌ Ingestion error: {e}", exc_info=True)
+        logger.error(f"Ingestion error: {e}", exc_info=True)
         return JSONResponse(
             content={"error": str(e)},
             status_code=500
@@ -507,32 +464,6 @@ async def json_export(
     )
     result = csv_json_exporter.export_json(query)
     return JSONResponse(content=result)
-
-
-# ============================================================================
-# REAL-TIME STREAMING ENDPOINTS
-# ============================================================================
-
-@app.websocket("/ws/metrics")
-async def websocket_metrics(websocket: WebSocket):
-    """WebSocket endpoint for real-time metrics."""
-    if not stream_manager:
-        await websocket.close(code=1011, reason="Streaming not initialized")
-        return
-
-    await websocket_endpoint(websocket, stream_manager)
-
-
-@app.get("/stream/metrics")
-async def sse_metrics(request: Request):
-    """Server-Sent Events endpoint for real-time metrics."""
-    if not stream_manager:
-        return JSONResponse(
-            content={"error": "Streaming not initialized"},
-            status_code=503
-        )
-
-    return await sse_endpoint(request, stream_manager)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,6 @@ LogicMonitor Data Pipeline - Unified Application
 Integrates all components:
 - OTLP data ingestion and normalization
 - Data export (Prometheus, Grafana, PowerBI, CSV/JSON)
-- Real-time streaming (WebSocket, SSE, Pub/Sub)
 - Background processing tasks
 - Health monitoring and metrics
 """
@@ -26,9 +25,8 @@ from contextlib import asynccontextmanager
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import azure.functions as func
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, Response, Request
+from fastapi import FastAPI, Query, Response, Request
 from fastapi.responses import StreamingResponse, JSONResponse
-from sse_starlette.sse import EventSourceResponse
 
 # Import our components
 from src.exporters import (
@@ -36,15 +34,7 @@ from src.exporters import (
     GrafanaSimpleJSONDataSource,
     PowerBIExporter,
     CSVJSONExporter,
-    WebhookNotifier,
-    TimeSeriesQuery,
-    AlertEvent,
-    WebhookConfig
-)
-from src.realtime import (
-    RealtimeStreamManager,
-    websocket_endpoint,
-    sse_endpoint
+    TimeSeriesQuery
 )
 
 # Configure logging
@@ -58,7 +48,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Global state
-stream_manager: Optional[RealtimeStreamManager] = None
 background_tasks: Dict[str, asyncio.Task] = {}
 shutdown_event = asyncio.Event()
 
@@ -87,54 +76,31 @@ async def lifespan(app: FastAPI):
 
     Handles startup and shutdown of services.
     """
-    logger.info("🚀 Starting LogicMonitor Data Pipeline...")
+    logger.info("Starting LogicMonitor Data Pipeline...")
 
-    global stream_manager, background_tasks
-
-    # Initialize real-time streaming
-    try:
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-        use_redis = os.getenv("USE_REDIS", "false").lower() == "true"
-
-        stream_manager = RealtimeStreamManager(
-            redis_url=redis_url,
-            use_redis=use_redis
-        )
-        await stream_manager.start()
-        logger.info("✅ Real-time streaming initialized")
-    except Exception as e:
-        logger.error(f"❌ Failed to initialize streaming: {e}")
-        stream_manager = None
+    global background_tasks
 
     # Start background tasks
     try:
         background_tasks["data_processor"] = asyncio.create_task(
             data_processing_loop()
         )
-        background_tasks["metric_publisher"] = asyncio.create_task(
-            metric_publishing_loop()
-        )
         background_tasks["health_monitor"] = asyncio.create_task(
             health_monitoring_loop()
         )
-        logger.info("✅ Background tasks started")
+        logger.info("Background tasks started")
     except Exception as e:
-        logger.error(f"❌ Failed to start background tasks: {e}")
+        logger.error(f"Failed to start background tasks: {e}")
 
-    logger.info("✨ Application ready!")
+    logger.info("Application ready!")
 
     yield  # Application runs here
 
     # Shutdown
-    logger.info("🛑 Shutting down gracefully...")
+    logger.info("Shutting down gracefully...")
 
     # Signal shutdown
     shutdown_event.set()
-
-    # Stop streaming
-    if stream_manager:
-        await stream_manager.stop()
-        logger.info("✅ Streaming stopped")
 
     # Cancel background tasks
     for name, task in background_tasks.items():
@@ -204,50 +170,6 @@ async def data_processing_loop():
 
         # Wait before next check
         await asyncio.sleep(30)  # Check every 30 seconds
-
-async def metric_publishing_loop():
-    """
-    Background task to publish metrics to real-time streams.
-
-    Polls for new metrics and broadcasts via WebSocket/SSE.
-    """
-    logger.info("📡 Metric publisher started")
-
-    while not shutdown_event.is_set():
-        try:
-            if stream_manager:
-                # Query recent metrics
-                conn_str = get_db_connection_string()
-                conn = psycopg2.connect(conn_str)
-
-                with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                    cur.execute("""
-                        SELECT
-                            md.name as metric_name,
-                            r.attributes as resource,
-                            COALESCE(m.value_double, m.value_int::float) as value,
-                            m.timestamp
-                        FROM metric_data m
-                        JOIN metric_definitions md ON m.metric_definition_id = md.id
-                        JOIN resources r ON m.resource_id = r.id
-                        WHERE m.timestamp > NOW() - INTERVAL '1 minute'
-                        LIMIT 100
-                    """)
-
-                    for row in cur.fetchall():
-                        await stream_manager.publish_metric_update(
-                            metric_name=row['metric_name'],
-                            resource=row['resource'],
-                            value=row['value'],
-                            timestamp=row['timestamp']
-                        )
-
-                conn.close()
-
-        except Exception as e:
-            logger.error(f"Error in metric publisher: {e}")
-
-        await asyncio.sleep(10)  # Publish every 10 seconds
 
 async def health_monitoring_loop():
     """
@@ -492,26 +414,6 @@ async def export_json(
     json_data = csv_json_exporter.export_json(query, pretty=pretty)
     return Response(content=json_data, media_type="application/json")
 
-# Real-time Streaming
-@fastapi_app.websocket("/ws")
-async def websocket_route(websocket: WebSocket, client_id: Optional[str] = None):
-    """WebSocket endpoint for live metrics."""
-    if stream_manager:
-        await websocket_endpoint(websocket, stream_manager, client_id)
-    else:
-        await websocket.close(code=1011, reason="Streaming not available")
-
-@fastapi_app.get("/sse")
-async def sse_route(client_id: str, last_event_id: Optional[str] = None):
-    """Server-Sent Events endpoint."""
-    if stream_manager:
-        return await sse_endpoint(client_id, stream_manager, last_event_id)
-    else:
-        return JSONResponse(
-            {"error": "Streaming not available"},
-            status_code=503
-        )
-
 # Health and Metrics
 @fastapi_app.get("/api/health")
 async def api_health():
@@ -540,16 +442,6 @@ async def api_health():
             "error": str(e)
         }
         health["status"] = "degraded"
-
-    # Streaming
-    if stream_manager:
-        active_ws = len(stream_manager.ws_manager.active_connections)
-        health["components"]["streaming"] = {
-            "status": "healthy",
-            "active_websockets": active_ws
-        }
-    else:
-        health["components"]["streaming"] = {"status": "not initialized"}
 
     # Background tasks
     task_status = {}
