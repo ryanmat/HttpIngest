@@ -22,6 +22,8 @@ Features:
 
 import logging
 import json
+import asyncio
+import random
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timezone
 from dataclasses import dataclass
@@ -41,6 +43,11 @@ from src.otlp_parser import (
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+# Retry configuration for deadlock handling
+MAX_DEADLOCK_RETRIES = 3
+INITIAL_RETRY_DELAY_MS = 50
+MAX_RETRY_DELAY_MS = 500
 
 
 @dataclass
@@ -252,6 +259,42 @@ class AsyncDataProcessor:
 
         return metric_data_id
 
+    async def batch_insert_metric_data_points(
+        self,
+        conn: asyncpg.Connection,
+        data_points: List[Tuple[int, int, datetime, Optional[float], Optional[int], Optional[str]]]
+    ) -> int:
+        """
+        Batch insert multiple metric data points in a single operation.
+
+        Uses executemany for efficient bulk inserts, reducing database round trips
+        from O(n) to O(1) where n is the number of data points.
+
+        Args:
+            conn: Database connection
+            data_points: List of tuples containing:
+                (resource_id, metric_definition_id, timestamp, value_double, value_int, attributes_json)
+
+        Returns:
+            Number of rows inserted
+        """
+        if not data_points:
+            return 0
+
+        await conn.executemany("""
+            INSERT INTO metric_data (
+                resource_id,
+                metric_definition_id,
+                timestamp,
+                value_double,
+                value_int,
+                attributes
+            )
+            VALUES ($1, $2, $3, $4, $5, $6)
+        """, data_points)
+
+        return len(data_points)
+
     async def mark_as_processing(self, conn: asyncpg.Connection, lm_metrics_id: int) -> None:
         """
         Mark a record as being processed.
@@ -315,6 +358,7 @@ class AsyncDataProcessor:
         Process a single lm_metrics record.
 
         This method is transactional - if any step fails, all changes are rolled back.
+        Includes retry logic for deadlock handling when multiple replicas process concurrently.
 
         Args:
             lm_metrics_id: ID of the lm_metrics record
@@ -323,120 +367,165 @@ class AsyncDataProcessor:
         Returns:
             ProcessingResult with statistics and status
         """
-        async with self.db_pool.acquire() as conn:
-            try:
-                # Start transaction
-                async with conn.transaction():
-                    # Mark as processing
-                    await self.mark_as_processing(conn, lm_metrics_id)
+        last_error = None
 
-                    # Parse OTLP payload
-                    self.logger.debug(f"Parsing record {lm_metrics_id}")
-                    parsed = parse_otlp(payload)
+        for attempt in range(MAX_DEADLOCK_RETRIES + 1):
+            async with self.db_pool.acquire() as conn:
+                try:
+                    # Start transaction
+                    async with conn.transaction():
+                        # Mark as processing
+                        await self.mark_as_processing(conn, lm_metrics_id)
 
-                    # Deduplicate
-                    unique_resources = deduplicate_resources(parsed.resources)
-                    unique_datasources = deduplicate_datasources(parsed.datasources)
-                    unique_metric_defs = deduplicate_metric_definitions(parsed.metric_definitions)
+                        # Parse OTLP payload
+                        self.logger.debug(f"Parsing record {lm_metrics_id}")
+                        parsed = parse_otlp(payload)
 
-                    resources_created = 0
-                    datasources_created = 0
-                    metric_defs_created = 0
-                    metric_data_created = 0
+                        # Deduplicate
+                        unique_resources = deduplicate_resources(parsed.resources)
+                        unique_datasources = deduplicate_datasources(parsed.datasources)
+                        unique_metric_defs = deduplicate_metric_definitions(parsed.metric_definitions)
 
-                    # Track resource IDs for metric data insertion
-                    resource_id_map = {}  # resource_hash -> resource_id
+                        resources_created = 0
+                        datasources_created = 0
+                        metric_defs_created = 0
+                        metric_data_created = 0
 
-                    # Upsert resources
-                    self.logger.debug(f"Upserting {len(unique_resources)} resources")
-                    for resource in unique_resources:
-                        resource_id = await self.upsert_resource(conn, resource)
-                        resource_id_map[resource.resource_hash] = resource_id
-                        resources_created += 1
+                        # Track resource IDs for metric data insertion
+                        resource_id_map = {}  # resource_hash -> resource_id
 
-                    # Track datasource IDs for metric definitions
-                    datasource_id_map = {}  # (name, version) -> datasource_id
+                        # Upsert resources
+                        self.logger.debug(f"Upserting {len(unique_resources)} resources")
+                        for resource in unique_resources:
+                            resource_id = await self.upsert_resource(conn, resource)
+                            resource_id_map[resource.resource_hash] = resource_id
+                            resources_created += 1
 
-                    # Upsert datasources
-                    self.logger.debug(f"Upserting {len(unique_datasources)} datasources")
-                    for datasource in unique_datasources:
-                        datasource_id = await self.upsert_datasource(conn, datasource)
-                        datasource_id_map[(datasource.name, datasource.version)] = datasource_id
-                        datasources_created += 1
+                        # Track datasource IDs for metric definitions
+                        datasource_id_map = {}  # (name, version) -> datasource_id
 
-                    # Track metric definition IDs for data point insertion
-                    metric_def_id_map = {}  # (datasource_name, datasource_version, metric_name) -> metric_def_id
+                        # Upsert datasources
+                        self.logger.debug(f"Upserting {len(unique_datasources)} datasources")
+                        for datasource in unique_datasources:
+                            datasource_id = await self.upsert_datasource(conn, datasource)
+                            datasource_id_map[(datasource.name, datasource.version)] = datasource_id
+                            datasources_created += 1
 
-                    # Upsert metric definitions
-                    self.logger.debug(f"Upserting {len(unique_metric_defs)} metric definitions")
-                    for metric_def in unique_metric_defs:
-                        datasource_id = datasource_id_map.get(
-                            (metric_def.datasource_name, metric_def.datasource_version)
-                        )
+                        # Track metric definition IDs for data point insertion
+                        metric_def_id_map = {}  # (datasource_name, datasource_version, metric_name) -> metric_def_id
 
-                        if not datasource_id:
-                            self.logger.warning(
-                                f"Datasource not found for metric: {metric_def.datasource_name} v{metric_def.datasource_version}"
+                        # Upsert metric definitions
+                        self.logger.debug(f"Upserting {len(unique_metric_defs)} metric definitions")
+                        for metric_def in unique_metric_defs:
+                            datasource_id = datasource_id_map.get(
+                                (metric_def.datasource_name, metric_def.datasource_version)
                             )
-                            continue
 
-                        metric_def_id = await self.upsert_metric_definition(conn, metric_def, datasource_id)
-                        metric_def_id_map[
-                            (metric_def.datasource_name, metric_def.datasource_version, metric_def.name)
-                        ] = metric_def_id
-                        metric_defs_created += 1
+                            if not datasource_id:
+                                self.logger.warning(
+                                    f"Datasource not found for metric: {metric_def.datasource_name} v{metric_def.datasource_version}"
+                                )
+                                continue
 
-                    # Insert metric data points
-                    self.logger.debug(f"Inserting {len(parsed.metric_data)} metric data points")
-                    for data_point in parsed.metric_data:
-                        # Get resource ID
-                        resource_id = resource_id_map.get(data_point.resource_hash)
-                        if not resource_id:
-                            self.logger.warning(f"Resource not found for data point: {data_point.resource_hash}")
-                            continue
+                            metric_def_id = await self.upsert_metric_definition(conn, metric_def, datasource_id)
+                            metric_def_id_map[
+                                (metric_def.datasource_name, metric_def.datasource_version, metric_def.name)
+                            ] = metric_def_id
+                            metric_defs_created += 1
 
-                        # Get metric definition ID
-                        metric_def_id = metric_def_id_map.get(
-                            (data_point.datasource_name, data_point.datasource_version, data_point.metric_name)
-                        )
-                        if not metric_def_id:
-                            self.logger.warning(
-                                f"Metric definition not found: {data_point.datasource_name}/{data_point.metric_name}"
+                        # Collect metric data points for batch insert
+                        self.logger.debug(f"Preparing {len(parsed.metric_data)} metric data points for batch insert")
+                        batch_data_points = []
+                        skipped_points = 0
+
+                        for data_point in parsed.metric_data:
+                            # Get resource ID
+                            resource_id = resource_id_map.get(data_point.resource_hash)
+                            if not resource_id:
+                                self.logger.warning(f"Resource not found for data point: {data_point.resource_hash}")
+                                skipped_points += 1
+                                continue
+
+                            # Get metric definition ID
+                            metric_def_id = metric_def_id_map.get(
+                                (data_point.datasource_name, data_point.datasource_version, data_point.metric_name)
                             )
-                            continue
+                            if not metric_def_id:
+                                self.logger.warning(
+                                    f"Metric definition not found: {data_point.datasource_name}/{data_point.metric_name}"
+                                )
+                                skipped_points += 1
+                                continue
 
-                        await self.insert_metric_data_point(conn, data_point, resource_id, metric_def_id)
-                        metric_data_created += 1
+                            # Prepare tuple for batch insert
+                            batch_data_points.append((
+                                resource_id,
+                                metric_def_id,
+                                data_point.timestamp,
+                                data_point.value_double,
+                                data_point.value_int,
+                                json.dumps(data_point.attributes) if data_point.attributes else None
+                            ))
 
-                    # Mark as success
-                    await self.mark_as_success(conn, lm_metrics_id, metric_data_created)
+                        # Batch insert all metric data points in one operation
+                        if batch_data_points:
+                            metric_data_created = await self.batch_insert_metric_data_points(conn, batch_data_points)
+                            self.logger.debug(f"Batch inserted {metric_data_created} metric data points")
 
-                # Transaction committed automatically if no exception
+                        if skipped_points > 0:
+                            self.logger.warning(f"Skipped {skipped_points} data points due to missing references")
 
-                self.logger.info(
-                    f"Successfully processed record {lm_metrics_id}: "
-                    f"{resources_created} resources, {datasources_created} datasources, "
-                    f"{metric_defs_created} metric defs, {metric_data_created} data points"
-                )
+                        # Mark as success
+                        await self.mark_as_success(conn, lm_metrics_id, metric_data_created)
 
-                return ProcessingResult(
-                    lm_metrics_id=lm_metrics_id,
-                    success=True,
-                    resources_created=resources_created,
-                    datasources_created=datasources_created,
-                    metric_definitions_created=metric_defs_created,
-                    metric_data_created=metric_data_created
-                )
+                    # Transaction committed automatically if no exception
 
-            except Exception as e:
-                # Transaction automatically rolled back on exception
-                error_msg = str(e)
-                self.logger.error(f"Failed to process record {lm_metrics_id}: {error_msg}", exc_info=True)
+                    self.logger.info(
+                        f"Successfully processed record {lm_metrics_id}: "
+                        f"{resources_created} resources, {datasources_created} datasources, "
+                        f"{metric_defs_created} metric defs, {metric_data_created} data points"
+                    )
+
+                    return ProcessingResult(
+                        lm_metrics_id=lm_metrics_id,
+                        success=True,
+                        resources_created=resources_created,
+                        datasources_created=datasources_created,
+                        metric_definitions_created=metric_defs_created,
+                        metric_data_created=metric_data_created
+                    )
+
+                except asyncpg.exceptions.DeadlockDetectedError as e:
+                    # Deadlock detected - retry with exponential backoff
+                    last_error = str(e)
+                    if attempt < MAX_DEADLOCK_RETRIES:
+                        # Calculate delay with jitter to prevent thundering herd
+                        delay_ms = min(
+                            INITIAL_RETRY_DELAY_MS * (2 ** attempt) + random.randint(0, 50),
+                            MAX_RETRY_DELAY_MS
+                        )
+                        self.logger.warning(
+                            f"Deadlock detected for record {lm_metrics_id}, "
+                            f"retrying in {delay_ms}ms (attempt {attempt + 1}/{MAX_DEADLOCK_RETRIES})"
+                        )
+                        await asyncio.sleep(delay_ms / 1000.0)
+                        continue
+                    else:
+                        self.logger.error(
+                            f"Deadlock persists for record {lm_metrics_id} after {MAX_DEADLOCK_RETRIES} retries"
+                        )
+                        # Fall through to mark as failed
+
+                except Exception as e:
+                    # Other errors - don't retry
+                    last_error = str(e)
+                    self.logger.error(f"Failed to process record {lm_metrics_id}: {last_error}", exc_info=True)
 
                 # Mark as failed (in a new transaction)
                 try:
-                    async with conn.transaction():
-                        await self.mark_as_failed(conn, lm_metrics_id, error_msg)
+                    async with self.db_pool.acquire() as fail_conn:
+                        async with fail_conn.transaction():
+                            await self.mark_as_failed(fail_conn, lm_metrics_id, last_error)
                 except Exception as mark_error:
                     self.logger.error(f"Failed to mark record as failed: {mark_error}")
 
@@ -447,8 +536,19 @@ class AsyncDataProcessor:
                     datasources_created=0,
                     metric_definitions_created=0,
                     metric_data_created=0,
-                    error_message=error_msg
+                    error_message=last_error
                 )
+
+        # Should not reach here, but handle edge case
+        return ProcessingResult(
+            lm_metrics_id=lm_metrics_id,
+            success=False,
+            resources_created=0,
+            datasources_created=0,
+            metric_definitions_created=0,
+            metric_data_created=0,
+            error_message=last_error or "Unknown error after retries"
+        )
 
     async def process_batch(
         self,
