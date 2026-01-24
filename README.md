@@ -5,7 +5,7 @@
 
 # LogicMonitor OTLP Data Pipeline
 
-Async data pipeline for ingesting, normalizing, and exporting OTLP formatted JSON metrics from LogicMonitor Collector HTTPS Publisher. Serves as the **data ingestion layer** for the LM Predictive Analytics ML ecosystem.
+Async data pipeline for ingesting, normalizing, and exporting OTLP formatted JSON metrics from LogicMonitor Data Publisher(HTTPS). Serves as the **data ingestion layer** for the Precursor predictive ML ecosystem.
 
 ## Ecosystem Overview
 
@@ -67,10 +67,6 @@ LogicMonitor Collector → HTTPS Publisher → Container App (/api/HttpIngest)
 - Managed identity authentication (no password storage)
 - Auto-scaling (3-10 replicas based on load)
 - Gzip compression support
-
-## Note on LLM Models
-
-There is always a big debate on letting LLM's touch your code. Personally, for me, I have Claude run my testing for me. This allows me to streamline the tests being ran while seeing any recommendations for improvements.
 
 ## Prerequisites
 
