@@ -1,6 +1,6 @@
 # LogicMonitor Data Pipeline - API Documentation
 
-**Version:** 12.0.0
+**Version:** 13.1
 **Base URL:** `https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io`
 **Protocol:** HTTPS
 
@@ -12,9 +12,7 @@
 2. [Data Ingestion](#data-ingestion)
 3. [Health & Monitoring](#health--monitoring)
 4. [Data Export](#data-export)
-5. [Real-time Streaming](#real-time-streaming)
-6. [Error Codes](#error-codes)
-7. [Rate Limits](#rate-limits)
+5. [Error Codes](#error-codes)
 
 ---
 
@@ -22,15 +20,13 @@
 
 ### API Key Authentication
 
-Include API key in request headers:
+**Status:** NOT IMPLEMENTED
 
-```http
-X-API-Key: your-api-key-here
-```
+API key authentication is not currently implemented. Endpoints are publicly accessible.
 
 ### Azure AD Authentication (Database)
 
-PostgreSQL connections use Azure AD tokens that expire every 90 minutes.
+PostgreSQL connections use Azure AD managed identity tokens that are refreshed automatically every 45 minutes.
 
 ---
 
@@ -83,11 +79,12 @@ Content-Encoding: gzip (optional)
 }
 ```
 
-**Response:** `202 Accepted`
+**Response:** `200 OK`
 ```json
 {
+  "status": "success",
   "id": 12345,
-  "status": "accepted"
+  "timestamp": "2025-01-14T12:00:00Z"
 }
 ```
 
@@ -105,79 +102,45 @@ curl -X POST https://{host}/api/HttpIngest \
 
 ### GET /api/health
 
-Basic health check for Azure Functions runtime.
+Health check endpoint with component-level status.
 
-**Response:** `200 OK`
+**Response:** `200 OK` (healthy) or `503 Service Unavailable` (degraded)
 ```json
 {
   "status": "healthy",
   "timestamp": "2025-01-14T12:00:00Z",
+  "version": "13.1-no-streaming",
   "components": {
     "database": "healthy",
-    "streaming": "healthy",
     "background_tasks": "3/3 running"
   }
 }
 ```
 
-### GET /api/health (FastAPI)
-
-Detailed health check with component-level status.
-
-**Response:** `200 OK`
-```json
-{
-  "status": "healthy",
-  "timestamp": "2025-01-14T12:00:00Z",
-  "version": "12.0.0",
-  "components": {
-    "database": {
-      "status": "healthy",
-      "metric_count": 125000
-    },
-    "streaming": {
-      "status": "healthy",
-      "active_websockets": 15
-    },
-    "background_tasks": {
-      "data_processor": "running",
-      "metric_publisher": "running",
-      "health_monitor": "running"
-    }
-  }
-}
-```
+**Components:**
+- `database`: PostgreSQL connection pool health
+- `background_tasks`: Number of running background tasks (data processing, health monitoring, token refresh)
 
 ### GET /api/metrics/summary
 
-Get metrics summary statistics.
+**Status:** NOT IMPLEMENTED
 
-**Response:** `200 OK`
-```json
-{
-  "metrics": 42,
-  "resources": 15,
-  "total_datapoints": 125000,
-  "oldest_data": "2025-01-01T00:00:00Z",
-  "newest_data": "2025-01-14T12:00:00Z"
-}
-```
+This endpoint does not exist in the current implementation.
 
 ---
 
 ## Data Export
 
-### GET /metrics/prometheus
+### GET /metrics
 
 Export metrics in Prometheus text format.
 
 **Query Parameters:**
-- `metrics` (optional): Comma-separated metric names
-- `hours` (optional, default=1): Hours of data to export
+None. Returns all metrics from the last hour (default configuration in code).
 
 **Example:**
 ```bash
-curl "https://{host}/metrics/prometheus?metrics=cpu.usage,memory.bytes&hours=1"
+curl "https://{host}/metrics"
 ```
 
 **Response:** `200 OK` (text/plain)
@@ -193,19 +156,7 @@ memory_bytes{service="my-service",host="host-01"} 8589934592 1673000000000
 
 ### Grafana SimpleJSON Datasource
 
-#### GET /grafana
-
-Health check for Grafana datasource.
-
-**Response:** `200 OK`
-```json
-{
-  "status": "ok",
-  "message": "LogicMonitor Data Pipeline"
-}
-```
-
-#### POST /grafana/search
+#### GET /grafana/search
 
 Search for available metrics.
 
@@ -256,25 +207,23 @@ Query time-series data.
 ]
 ```
 
-### GET /api/odata/metrics
+### GET /export/powerbi
 
-PowerBI OData export.
+PowerBI-compatible JSON export.
 
 **Query Parameters:**
-- `$skip` (optional, default=0): Number of records to skip
-- `$top` (optional, default=1000, max=10000): Number of records to return
+- `start_time` (optional): ISO 8601 timestamp (default: 24 hours ago)
+- `end_time` (optional): ISO 8601 timestamp (default: now)
 
 **Example:**
 ```bash
-curl "https://{host}/api/odata/metrics?$skip=0&$top=1000"
+curl "https://{host}/export/powerbi?start_time=2025-01-14T00:00:00&end_time=2025-01-14T12:00:00"
 ```
 
 **Response:** `200 OK`
 ```json
 {
-  "@odata.context": "https://{host}/api/odata/$metadata#metrics",
-  "@odata.count": 125000,
-  "value": [
+  "data": [
     {
       "metric_name": "cpu.usage",
       "resource_service": "my-service",
@@ -282,8 +231,7 @@ curl "https://{host}/api/odata/metrics?$skip=0&$top=1000"
       "value": 45.5,
       "timestamp": "2025-01-14T12:00:00Z"
     }
-  ],
-  "@odata.nextLink": "https://{host}/api/odata/metrics?$skip=1000&$top=1000"
+  ]
 }
 ```
 
@@ -292,12 +240,12 @@ curl "https://{host}/api/odata/metrics?$skip=0&$top=1000"
 Export metrics as CSV.
 
 **Query Parameters:**
-- `metrics` (required): Comma-separated metric names
-- `hours` (optional, default=24): Hours of data
+- `start_time` (optional): ISO 8601 timestamp (default: 24 hours ago)
+- `end_time` (optional): ISO 8601 timestamp (default: now)
 
 **Example:**
 ```bash
-curl "https://{host}/export/csv?metrics=cpu.usage&hours=24" > metrics.csv
+curl "https://{host}/export/csv?start_time=2025-01-14T00:00:00&end_time=2025-01-14T12:00:00" > metrics.csv
 ```
 
 **Response:** `200 OK` (text/csv)
@@ -312,13 +260,12 @@ cpu.usage,my-service,host-01,46.2,2025-01-14T12:01:00Z
 Export metrics as JSON.
 
 **Query Parameters:**
-- `metrics` (required): Comma-separated metric names
-- `hours` (optional, default=24): Hours of data
-- `pretty` (optional, default=false): Pretty-print JSON
+- `start_time` (optional): ISO 8601 timestamp (default: 24 hours ago)
+- `end_time` (optional): ISO 8601 timestamp (default: now)
 
 **Example:**
 ```bash
-curl "https://{host}/export/json?metrics=cpu.usage&hours=1&pretty=true"
+curl "https://{host}/export/json?start_time=2025-01-14T00:00:00&end_time=2025-01-14T12:00:00"
 ```
 
 **Response:** `200 OK` (application/json)
@@ -341,142 +288,23 @@ curl "https://{host}/export/json?metrics=cpu.usage&hours=1&pretty=true"
 
 ---
 
-## Real-time Streaming
-
-### WebSocket /ws
-
-Real-time metric updates via WebSocket.
-
-**Connection:**
-```javascript
-const ws = new WebSocket('wss://{host}/ws?client_id=my-client');
-
-ws.onopen = () => {
-  console.log('Connected');
-
-  // Subscribe to metrics
-  ws.send(JSON.stringify({
-    action: 'subscribe',
-    patterns: ['cpu.*', 'memory.*']
-  }));
-};
-
-ws.onmessage = (event) => {
-  const message = JSON.parse(event.data);
-  console.log('Update:', message);
-};
-```
-
-**Message Format:**
-```json
-{
-  "type": "metric_update",
-  "metric_name": "cpu.usage",
-  "resource": {
-    "service": "my-service",
-    "host": "host-01"
-  },
-  "value": 45.5,
-  "timestamp": "2025-01-14T12:00:00Z",
-  "sequence": 12345
-}
-```
-
-**Subscription Actions:**
-```json
-{
-  "action": "subscribe",
-  "patterns": ["cpu.*", "memory.*"]
-}
-
-{
-  "action": "unsubscribe",
-  "patterns": ["cpu.*"]
-}
-```
-
-**Rate Limiting:**
-- Default: 10 messages/second per client
-- Burst: 20 messages
-- Backpressure notification on rate limit exceeded
-
-### GET /sse
-
-Server-Sent Events for one-way streaming.
-
-**Connection:**
-```javascript
-const eventSource = new EventSource('https://{host}/sse?client_id=my-client');
-
-eventSource.onmessage = (event) => {
-  const data = JSON.parse(event.data);
-  console.log('Update:', data);
-};
-
-// Automatic reconnection with Last-Event-ID
-```
-
-**Event Format:**
-```
-id: 12345
-event: metric_update
-data: {"metric_name":"cpu.usage","value":45.5,"timestamp":"2025-01-14T12:00:00Z"}
-
-```
-
----
-
 ## Error Codes
 
 | Code | Description | Resolution |
 |------|-------------|------------|
 | 400 | Bad Request | Check request format and parameters |
-| 401 | Unauthorized | Provide valid API key |
-| 403 | Forbidden | Check API key permissions |
 | 404 | Not Found | Verify endpoint URL |
-| 429 | Too Many Requests | Reduce request rate |
 | 500 | Internal Server Error | Check logs, contact support |
-| 503 | Service Unavailable | Service temporarily down, retry later |
+| 503 | Service Unavailable | Database unavailable or service degraded |
 
 **Error Response Format:**
 ```json
 {
-  "error": {
-    "code": "INVALID_REQUEST",
-    "message": "Invalid OTLP payload format",
-    "details": "Missing resourceMetrics field"
-  }
+  "error": "Error description"
 }
 ```
 
----
-
-## Rate Limits
-
-### HTTP Endpoints
-
-| Endpoint | Rate Limit | Burst |
-|----------|------------|-------|
-| /api/HttpIngest | 1000/min | 100 |
-| /metrics/prometheus | 60/min | 10 |
-| /export/* | 30/min | 5 |
-| /api/health | Unlimited | - |
-
-### WebSocket Connections
-
-- **Max Connections:** 1000 concurrent
-- **Messages/sec per client:** 10 (configurable)
-- **Burst size:** 20 messages
-- **Message buffer:** 1000 messages per client
-- **Reconnection:** State preserved for 24 hours
-
-### Rate Limit Headers
-
-```http
-X-RateLimit-Limit: 1000
-X-RateLimit-Remaining: 950
-X-RateLimit-Reset: 1673000060
-```
+**Note:** Authentication (401/403) and rate limiting (429) are not currently implemented.
 
 ---
 
@@ -484,31 +312,23 @@ X-RateLimit-Reset: 1673000060
 
 ### Data Ingestion
 
-1. **Use gzip compression** for payloads > 1KB
+1. **Use gzip compression** for payloads > 1KB (set `Content-Encoding: gzip` header)
 2. **Batch metrics** (recommended: 100-1000 metrics per request)
 3. **Include timestamps** in Unix nanoseconds
 4. **Set proper resource attributes** for better filtering
 
 ### Export
 
-1. **Use Prometheus export** for time-series monitoring
-2. **Use Grafana datasource** for dashboards
-3. **Use PowerBI** for business intelligence
-4. **Use CSV/JSON** for ad-hoc analysis
-
-### Real-time Streaming
-
-1. **Specify client_id** for reconnection support
-2. **Subscribe to specific patterns** to reduce traffic
-3. **Handle backpressure** notifications
-4. **Implement exponential backoff** on reconnection
+1. **Use Prometheus export** (`/metrics`) for time-series monitoring tools
+2. **Use Grafana datasource** (`/grafana/search` and `/grafana/query`) for dashboards
+3. **Use PowerBI export** (`/export/powerbi`) for business intelligence
+4. **Use CSV/JSON** (`/export/csv`, `/export/json`) for ad-hoc analysis
 
 ### Performance
 
-1. **Cache Prometheus/Grafana queries** (1-5 minutes)
-2. **Use pagination** for large exports ($skip/$top)
-3. **Limit time ranges** (default: last hour)
-4. **Monitor rate limits** via headers
+1. **Limit time ranges** when exporting data (default: last 24 hours)
+2. **Use appropriate query parameters** (start_time, end_time) to reduce data volume
+3. **Monitor application health** via `/api/health` endpoint
 
 ---
 

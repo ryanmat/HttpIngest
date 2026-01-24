@@ -116,7 +116,7 @@ Use the deployment script for Container Apps:
 
 ```bash
 # Deploy specific version
-./scripts/deploy.sh v15 main
+./scripts/deploy.sh 13.1-no-streaming main
 
 # Script will:
 # - Build Docker image in ACR from GitHub
@@ -133,7 +133,7 @@ RESOURCE_GROUP="resource-group-name"
 CONTAINER_APP="container-app-name"
 ACR_NAME="registry-name"
 IMAGE_NAME="lm-http-ingest"
-VERSION="v15"
+VERSION="13.1-no-streaming"
 
 # Build and push image to ACR
 az acr build \
@@ -150,7 +150,7 @@ az containerapp update \
   --image $ACR_NAME.azurecr.io/$IMAGE_NAME:$VERSION \
   --set-env-vars \
     "USE_MANAGED_IDENTITY=true" \
-  --revision-suffix $VERSION
+  --revision-suffix 13.1-no-streaming
 ```
 
 ### Managed Identity Setup
@@ -380,7 +380,7 @@ Response:
 {
   "status": "healthy",
   "timestamp": "2025-01-16T20:26:03.518041",
-  "version": "v15",
+  "version": "13.1-no-streaming",
   "components": {
     "database": "healthy",
     "background_tasks": "3/3 running"

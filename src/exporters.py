@@ -23,8 +23,6 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field, asdict
 from enum import Enum
-import requests
-
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
@@ -367,7 +365,7 @@ class GrafanaSimpleJSONDataSource:
         # Handle timestamp
         try:
             return datetime.fromtimestamp(int(dt_str) / 1000)
-        except:
+        except (ValueError, TypeError, OSError):
             return datetime.now()
 
 

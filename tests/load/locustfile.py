@@ -251,7 +251,7 @@ def _(parser):
 @events.test_start.add_listener
 def _(environment, **kwargs):
     """Log test start."""
-    print(f"🚀 Starting load test")
+    print(f"Starting load test")
     print(f"   Target: {environment.host}")
     print(f"   Users: {environment.runner.target_user_count}")
 
@@ -260,7 +260,7 @@ def _(environment, **kwargs):
 def _(environment, **kwargs):
     """Log test results summary."""
     stats = environment.stats
-    print(f"\n📊 Load Test Summary")
+    print(f"\nLoad Test Summary")
     print(f"   Total Requests: {stats.total.num_requests}")
     print(f"   Failures: {stats.total.num_failures}")
     print(f"   Median Response Time: {stats.total.median_response_time}ms")

@@ -53,47 +53,44 @@ db_pool: Optional[asyncpg.Pool] = None
 background_tasks: Dict[str, asyncio.Task] = {}
 shutdown_event = asyncio.Event()
 
-# Database connection
+# Database configuration constants
+MANAGED_IDENTITY_USER = "ca-cta-lm-ingest"
+
+
+def _get_db_config() -> Dict[str, Any]:
+    """Get common database configuration from environment."""
+    use_managed_identity = os.getenv("USE_MANAGED_IDENTITY", "false").lower() == "true"
+    return {
+        "host": os.getenv("POSTGRES_HOST", "localhost"),
+        "port": os.getenv("POSTGRES_PORT", "5432"),
+        "database": os.getenv("POSTGRES_DB", "postgres"),
+        "user": MANAGED_IDENTITY_USER if use_managed_identity else os.getenv("POSTGRES_USER", "postgres"),
+        "password": os.getenv("POSTGRES_PASSWORD", ""),
+        "use_managed_identity": use_managed_identity,
+    }
+
+
 def get_db_connection_string() -> str:
     """Get PostgreSQL connection string from environment (for psycopg2)."""
     conn_str = os.getenv("POSTGRES_CONN_STR")
     if not conn_str:
-        # Fallback to individual components
-        # Use psycopg2 parameter format instead of URL to avoid special character issues
-        host = os.getenv("POSTGRES_HOST", "localhost")
-        port = os.getenv("POSTGRES_PORT", "5432")
-        db = os.getenv("POSTGRES_DB", "postgres")
-
-        # Use managed identity user if USE_MANAGED_IDENTITY is set
-        use_managed_identity = os.getenv("USE_MANAGED_IDENTITY", "false").lower() == "true"
-        if use_managed_identity:
-            user = "ca-cta-lm-ingest"  # Managed identity user
-        else:
-            user = os.getenv("POSTGRES_USER", "postgres")
-
-        password = os.getenv("POSTGRES_PASSWORD", "")
-
-        conn_str = f"host={host} port={port} dbname={db} user={user} password={password} sslmode=require"
-
+        config = _get_db_config()
+        conn_str = (
+            f"host={config['host']} port={config['port']} dbname={config['database']} "
+            f"user={config['user']} password={config['password']} sslmode=require"
+        )
     return conn_str
 
 
 def get_db_connection_params() -> Dict[str, Any]:
     """Get PostgreSQL connection parameters from environment (for asyncpg)."""
-    # Use managed identity user if USE_MANAGED_IDENTITY is set, otherwise use env var
-    use_managed_identity = os.getenv("USE_MANAGED_IDENTITY", "false").lower() == "true"
-
-    if use_managed_identity:
-        user = "ca-cta-lm-ingest"  # Managed identity user
-    else:
-        user = os.getenv("POSTGRES_USER", "postgres")
-
+    config = _get_db_config()
     return {
-        "host": os.getenv("POSTGRES_HOST", "localhost"),
-        "port": int(os.getenv("POSTGRES_PORT", "5432")),
-        "database": os.getenv("POSTGRES_DB", "postgres"),
-        "user": user,
-        "password": os.getenv("POSTGRES_PASSWORD", ""),
+        "host": config["host"],
+        "port": int(config["port"]),
+        "database": config["database"],
+        "user": config["user"],
+        "password": config["password"],
         "ssl": "require"
     }
 
@@ -112,9 +109,9 @@ async def lifespan(app: FastAPI):
     # Initialize database connection pool
     # If using managed identity, get token first
     try:
-        use_managed_identity = os.getenv("USE_MANAGED_IDENTITY", "false").lower() == "true"
+        db_config = _get_db_config()
 
-        if use_managed_identity:
+        if db_config["use_managed_identity"]:
             logger.info("Using managed identity for database authentication...")
             credential = DefaultAzureCredential()
             token = await credential.get_token("https://ossrdbms-aad.database.windows.net/.default")
@@ -138,14 +135,14 @@ async def lifespan(app: FastAPI):
         background_tasks["data_processing"] = asyncio.create_task(data_processing_loop())
         background_tasks["health_monitoring"] = asyncio.create_task(health_monitoring_loop())
         background_tasks["token_refresh"] = asyncio.create_task(token_refresh_loop())
-        logger.info("✅ Background tasks started (data processing, health monitoring, token refresh)")
+        logger.info("Background tasks started (data processing, health monitoring, token refresh)")
     except Exception as e:
-        logger.error(f"❌ Failed to start background tasks: {e}")
+        logger.error(f"Failed to start background tasks: {e}")
 
     yield
 
     # Cleanup on shutdown
-    logger.info("🛑 Shutting down LogicMonitor Data Pipeline...")
+    logger.info("Shutting down LogicMonitor Data Pipeline...")
     shutdown_event.set()
 
     # Cancel background tasks
@@ -167,7 +164,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LogicMonitor Data Pipeline",
     description="Unified data pipeline for LogicMonitor metrics",
-    version="12.0.0-lite",
+    version="13.1-no-streaming",
     lifespan=lifespan
 )
 
@@ -190,7 +187,7 @@ async def data_processing_loop():
 
             if stats.successful > 0:
                 logger.info(
-                    f"📊 Processed {stats.successful}/{stats.total_records} metrics: "
+                    f"Processed {stats.successful}/{stats.total_records} metrics: "
                     f"{stats.resources_created} resources, "
                     f"{stats.datasources_created} datasources, "
                     f"{stats.metric_definitions_created} metrics, "
@@ -205,7 +202,7 @@ async def data_processing_loop():
                 await asyncio.sleep(0.5)
 
         except Exception as e:
-            logger.error(f"❌ Data processing error: {e}", exc_info=True)
+            logger.error(f"Data processing error: {e}", exc_info=True)
             await asyncio.sleep(10)
 
 
@@ -223,12 +220,12 @@ async def health_monitoring_loop():
                 """)
 
             if pending > 1000:
-                logger.warning(f"⚠️  High pending metrics: {pending}")
+                logger.warning(f"High pending metrics: {pending}")
 
             await asyncio.sleep(60)
 
         except Exception as e:
-            logger.error(f"❌ Health monitoring error: {e}")
+            logger.error(f"Health monitoring error: {e}")
             await asyncio.sleep(60)
 
 
@@ -243,7 +240,7 @@ async def token_refresh_loop():
             # Get access token for PostgreSQL (Azure OSSRDBMS scope)
             token = await credential.get_token("https://ossrdbms-aad.database.windows.net/.default")
 
-            logger.info("🔑 Obtained new Azure AD token for PostgreSQL")
+            logger.info("Obtained new Azure AD token for PostgreSQL")
 
             # Update environment variable (for sync connections used by exporters)
             os.environ["POSTGRES_PASSWORD"] = token.token
@@ -262,14 +259,14 @@ async def token_refresh_loop():
                 command_timeout=60
             )
 
-            logger.info("✅ Token refreshed and database pool recreated")
+            logger.info("Token refreshed and database pool recreated")
 
             # Refresh every 45 minutes (tokens last ~60-90 min)
             # This gives us a 15-45 minute buffer before expiration
             await asyncio.sleep(2700)  # 45 minutes
 
         except Exception as e:
-            logger.error(f"❌ Token refresh error: {e}", exc_info=True)
+            logger.error(f"Token refresh error: {e}", exc_info=True)
             # Retry more frequently on error
             await asyncio.sleep(60)
 

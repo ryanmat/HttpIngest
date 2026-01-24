@@ -3,6 +3,7 @@
 
 import pytest
 import subprocess
+import sys
 import os
 from pathlib import Path
 from alembic.config import Config
@@ -318,7 +319,7 @@ def test_migrate_script_shows_help():
     script_path = project_root / "scripts" / "migrate.py"
 
     result = subprocess.run(
-        ["python", str(script_path), "--help"],
+        [sys.executable, str(script_path), "--help"],
         capture_output=True,
         text=True
     )
