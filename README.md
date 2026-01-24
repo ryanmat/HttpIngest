@@ -5,7 +5,43 @@
 
 # LogicMonitor OTLP Data Pipeline
 
-Async data pipeline for ingesting, normalizing, and exporting OTLP formatted JSON metrics from LogicMonitor Collector HTTPS Publisher.
+Async data pipeline for ingesting, normalizing, and exporting OTLP formatted JSON metrics from LogicMonitor Collector HTTPS Publisher. Serves as the **data ingestion layer** for the LM Predictive Analytics ML ecosystem.
+
+## Ecosystem Overview
+
+HttpIngest is part of a three-layer ML ecosystem for predictive monitoring:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                         DATA LAYER (this project)                       │
+│                                                                         │
+│   LogicMonitor         HttpIngest              PostgreSQL               │
+│   Collectors    ───►   (Container App)   ───►  (normalized schema)      │
+│   (OTLP metrics)       /api/HttpIngest         metric_data, resources   │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          ML LAYER                                       │
+│                                                                         │
+│   Precursor (predictive-insights)                                       │
+│   - Feature engineering (windowing, normalization)                      │
+│   - X-DEC Model (BiGRU-XVAE-DEC clustering)                            │
+│   - Prediction API                                                      │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼ (Phase 14+)
+┌─────────────────────────────────────────────────────────────────────────┐
+│                       QUANTUM LAYER                                     │
+│                                                                         │
+│   quantum_mcp                                                           │
+│   - QAOA routing for expert selection                                   │
+│   - D-Wave annealing for QUBO optimization                             │
+│   - Quantum kernels for enhanced clustering                             │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+See [docs/ecosystem-integration.md](docs/ecosystem-integration.md) for full integration details.
 
 ## Architecture
 
@@ -20,6 +56,7 @@ Async data pipeline for ingesting, normalizing, and exporting OTLP formatted JSO
 LogicMonitor Collector → HTTPS Publisher → Container App (/api/HttpIngest)
     → PostgreSQL (normalized schema) → Materialized Views
     → Export APIs (Prometheus, Grafana, PowerBI, CSV/JSON)
+    → Precursor ML (training data queries)
 ```
 
 **Key Features:**
@@ -347,7 +384,7 @@ uv run pytest
 uv run pytest --cov=src --cov-report=html
 
 # Run specific test file
-uv run pytest tests/test_config.py -v
+uv run pytest tests/test_exporters.py -v
 
 # Run load tests
 uv run locust -f tests/load/locustfile.py --host=http://localhost:8000
@@ -481,21 +518,18 @@ CREATE INDEX idx_hourly_aggregates_hour ON hourly_aggregates(hour);
 .
 ├── containerapp_main.py      # FastAPI application entry point
 ├── Dockerfile.containerapp   # Container image build file
-├── pyproject.toml           # Python dependencies
+├── pyproject.toml           # Python dependencies (uv)
 ├── uv.lock                  # Locked dependencies
 ├── alembic.ini             # Database migration config
 ├── alembic/                # Database migrations
 │   └── versions/
 ├── src/                    # Source code
-│   ├── config.py           # Configuration management
 │   ├── data_processor_async.py  # Async data processing
 │   ├── exporters.py        # Export format handlers
-│   ├── otlp_parser.py      # OTLP parsing logic
-│   └── secrets.py          # Secret management
+│   └── otlp_parser.py      # OTLP parsing logic
 ├── scripts/                # Deployment and utility scripts
 │   ├── deploy.sh           # Automated deployment
-│   ├── migrate.py          # Migration helper
-│   └── verify_features.py  # Feature verification
+│   └── migrate.py          # Migration helper
 ├── tests/                  # Test suite
 │   ├── conftest.py
 │   ├── fixtures/
@@ -504,6 +538,7 @@ CREATE INDEX idx_hourly_aggregates_hour ON hourly_aggregates(hour);
 └── docs/                   # Documentation
     ├── api-documentation.md
     ├── deployment.md
+    ├── ecosystem-integration.md  # ML ecosystem integration
     ├── migrations.md
     └── otlp_parser.md
 ```
