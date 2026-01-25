@@ -638,7 +638,7 @@ class MLDataService:
                     "host_name": row["host_name"],
                     "gap_start": row["gap_start"].isoformat(),
                     "gap_end": row["gap_end"].isoformat(),
-                    "gap_minutes": round(row["gap_minutes"], 1),
+                    "gap_minutes": round(float(row["gap_minutes"]), 1),
                 }
                 for row in gap_rows
             ]
@@ -665,14 +665,16 @@ class MLDataService:
             range_rows = await conn.fetch(range_query, *range_params)
 
             def safe_round(val: Any, decimals: int = 4) -> Optional[float]:
-                """Round a value, returning None for NaN or None."""
+                """Round a value, returning None for NaN, Inf, or None."""
                 if val is None:
                     return None
                 try:
-                    if math.isnan(val) or math.isinf(val):
+                    # Convert to float first (handles Decimal, int, etc.)
+                    fval = float(val)
+                    if math.isnan(fval) or math.isinf(fval):
                         return None
-                    return round(val, decimals)
-                except (TypeError, ValueError):
+                    return round(fval, decimals)
+                except (TypeError, ValueError, OverflowError):
                     return None
 
             ranges_data = [
