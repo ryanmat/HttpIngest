@@ -3,24 +3,9 @@
 
 # HttpIngest TODO
 
-## Current Sprint: ML Integration Phase A
+## Current Sprint: ML Integration Phase B
 
 ### High Priority
-
-- [ ] Implement `/api/ml/inventory` endpoint
-  - Return available metrics, resources, and time ranges
-  - Support filtering by datasource/resource type
-
-- [ ] Implement `/api/ml/training-data` endpoint
-  - Stream training data in format Precursor expects
-  - Support profile parameter for metric filtering
-  - Support start/end time range parameters
-
-- [ ] Implement `/api/ml/profile-coverage` endpoint
-  - Check which profile metrics are available
-  - Return coverage percentage and gaps
-
-### Medium Priority
 
 - [ ] Implement `/api/ml/quality` endpoint
   - Data freshness metrics
@@ -31,11 +16,26 @@
   - Partition by timestamp for better query performance
   - Required for 56M+ rows in production
 
-### Low Priority
+### Medium Priority
 
 - [ ] Update api-documentation.md with ML endpoints
-- [ ] Add integration tests for ML endpoints
+- [ ] Add integration tests for ML endpoints with real database
 - [ ] Performance benchmarking with production data
+
+### Low Priority
+
+- [ ] Add more LM metric names to profiles as discovered
+- [ ] Add resource filtering to training-data endpoint
+
+## Completed (v15 ML Integration Phase A)
+
+- [x] Implement `/api/ml/inventory` endpoint with datasource/resource filtering
+- [x] Implement `/api/ml/training-data` endpoint with profile and time range support
+- [x] Implement `/api/ml/profile-coverage` endpoint with coverage percentages
+- [x] Implement `/api/ml/profiles` endpoint for listing feature profiles
+- [x] Add dual naming support (LM names + Precursor standard names) to profiles
+- [x] Deploy v15 to Azure Container Apps
+- [x] Verify profile coverage with live collector data
 
 ## Completed (v14 Cleanup)
 
@@ -61,5 +61,11 @@
 
 - HttpIngest does NOT directly integrate with quantum_mcp
 - Precursor is the primary consumer of ML endpoints
-- Local testing uses `collector` profile (ExecuteTime, ThreadCount, etc.)
-- Production testing targets 56M+ rows of metric data
+- Profiles support both LM metric names and Precursor standard names
+- Current profile coverage (v15):
+  - collector: 65.5% (19/29 features)
+  - kubernetes: 97.6% (40/41 features)
+  - cloud_compute: 55.9% (19/34 features)
+  - network: 50.0% (15/30 features)
+  - database: 44.8% (13/29 features)
+  - application: 48.6% (17/35 features)
