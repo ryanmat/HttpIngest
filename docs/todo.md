@@ -7,7 +7,7 @@
 
 ### High Priority
 
-- [ ] Implement `/api/ml/quality` endpoint
+- [x] Implement `/api/ml/quality` endpoint (v21)
   - Data freshness metrics
   - Gap detection
   - Value range validation
