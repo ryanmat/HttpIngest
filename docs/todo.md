@@ -24,7 +24,13 @@
   - 32 async integration tests covering inventory, training-data, profile-coverage, quality
   - Performance tests verify sub-5s response times
   - Fixed SQL column references in ml_service.py (md.datasource_id joins)
-- [ ] Performance benchmarking with production data
+- [x] Performance benchmarking with production data
+  - 488K rows across 3 partitions
+  - get_inventory: ~2.4s (1,336 metrics, 153 resources)
+  - get_training_data(limit=1000): ~1.1s
+  - get_training_data(profile filter): ~450ms
+  - get_profile_coverage: ~270ms (100% on all profiles)
+  - get_data_quality(24h): ~2.5s
 
 ### Low Priority
 
@@ -66,10 +72,10 @@
 - HttpIngest does NOT directly integrate with quantum_mcp
 - Precursor is the primary consumer of ML endpoints
 - Profiles support both LM metric names and Precursor standard names
-- Current profile coverage (v15):
-  - collector: 65.5% (19/29 features)
-  - kubernetes: 97.6% (40/41 features)
-  - cloud_compute: 55.9% (19/34 features)
-  - network: 50.0% (15/30 features)
-  - database: 44.8% (13/29 features)
-  - application: 48.6% (17/35 features)
+- Current profile coverage (v21 with partitioned data):
+  - collector: 100% (38/38 features)
+  - kubernetes: 100% (58/58 features)
+  - cloud_compute: 100% (46/46 features)
+  - network: 100% (21/21 features)
+  - database: 100% (10/10 features)
+  - application: 100% (25/25 features)
