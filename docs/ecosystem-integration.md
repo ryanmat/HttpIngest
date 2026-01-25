@@ -63,7 +63,7 @@ HttpIngest serves as the **data ingestion and serving layer** for the ML ecosyst
 - PowerBI OData (`/export/powerbi`)
 - CSV/JSON (`/export/csv`, `/export/json`)
 
-### 3. ML Data Service (Planned)
+### 3. ML Data Service (Live - v22+)
 - Metrics inventory (`/api/ml/inventory`)
 - Profile coverage (`/api/ml/profile-coverage`)
 - Training data streaming (`/api/ml/training-data`)
@@ -194,7 +194,7 @@ USE_MANAGED_IDENTITY=true
 
 | HttpIngest | Precursor | quantum_mcp | Notes |
 |------------|-----------|-------------|-------|
-| v14+ | Phase 9+ | Phase 3+ | Current compatible versions |
+| v22+ | Phase 9+ | Phase 3+ | Current compatible versions (ML endpoints live) |
 
 ## Contact
 

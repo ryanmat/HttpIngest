@@ -31,6 +31,12 @@
   - get_training_data(profile filter): ~450ms
   - get_profile_coverage: ~270ms (100% on all profiles)
   - get_data_quality(24h): ~2.5s
+- [x] Deploy v22 with SQL fixes (DEPLOYED)
+  - Fixed 3 SQL column reference bugs in ml_service.py
+  - Verified ML endpoints working: 535K data points, 1336 metrics, 153 resources
+- [x] Update documentation across all projects for single source of truth
+  - HttpIngest ecosystem-integration.md: "Planned" → "Live", v14+ → v22+
+  - Precursor integration_with_httpingest.md: "Planned ML Endpoints" → "ML Endpoints (Live)"
 
 ### Low Priority
 
@@ -72,7 +78,8 @@
 - HttpIngest does NOT directly integrate with quantum_mcp
 - Precursor is the primary consumer of ML endpoints
 - Profiles support both LM metric names and Precursor standard names
-- Current profile coverage (v21 with partitioned data):
+- Current production version: v22 (deployed to Azure Container Apps)
+- Current profile coverage (v22 with partitioned data):
   - collector: 100% (38/38 features)
   - kubernetes: 100% (58/58 features)
   - cloud_compute: 100% (46/46 features)
