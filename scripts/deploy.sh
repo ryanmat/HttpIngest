@@ -39,7 +39,7 @@ if [ -z "$1" ]; then
 fi
 
 VERSION="$1"
-BRANCH="${2:-feature/production-redesign}"
+BRANCH="${2:-main}"
 
 print_status "Starting deployment for version ${VERSION} from branch ${BRANCH}"
 
