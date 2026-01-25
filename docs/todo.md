@@ -12,9 +12,10 @@
   - Gap detection
   - Value range validation
 
-- [ ] Add table partitioning for metric_data
+- [x] Add table partitioning migration for metric_data (PR ready - run manually)
   - Partition by timestamp for better query performance
-  - Required for 56M+ rows in production
+  - Branch: feature/metric-data-partitioning
+  - Run with: `uv run python scripts/migrate.py upgrade`
 
 ### Medium Priority
 
