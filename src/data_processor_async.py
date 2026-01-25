@@ -105,12 +105,14 @@ class AsyncDataProcessor:
         Returns:
             List of (id, payload) tuples
         """
+        # Use RANDOM() ordering so multiple replicas work on different records
+        # This prevents all replicas from trying to lock the same records
         query = """
             SELECT lm.id, lm.payload
             FROM lm_metrics lm
             LEFT JOIN processing_status ps ON lm.id = ps.lm_metrics_id
             WHERE ps.id IS NULL
-            ORDER BY lm.id
+            ORDER BY RANDOM()
         """
 
         if limit:
