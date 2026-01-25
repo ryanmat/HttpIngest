@@ -1,98 +1,136 @@
 # Description: ML data service for Precursor integration.
-# Description: Provides inventory, training data, and profile coverage endpoints.
+# Description: Provides training data extraction and feature profile management.
 
 """
-ML Data Service for Precursor Integration.
+MLDataService for serving training data to Precursor ML models.
 
-This module provides endpoints that Precursor uses to:
-1. Discover available metrics and resources (/api/ml/inventory)
-2. Fetch training data in the expected format (/api/ml/training-data)
-3. Check coverage against feature profiles (/api/ml/profile-coverage)
+This module provides endpoints for:
+- Inventory of available metrics, resources, and datasources
+- Training data extraction with profile-based filtering
+- Profile coverage analysis
+- Feature profile definitions (mirrors Precursor's config/features.yaml)
 """
 
-from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
+from dataclasses import dataclass
 import asyncpg
 
 
-# Feature profiles supporting both Precursor standard names and LogicMonitor metric names.
-# Each profile includes both naming conventions to match data from either source.
+# Feature profiles matching Precursor's config/features.yaml (single source of truth).
+# All metric names are actual LogicMonitor metric names from production data.
 FEATURE_PROFILES = {
+    # LogicMonitor Collector Self-Monitoring
+    # Datasources: LogicMonitor_Collector_*
     "collector": {
         "description": "LogicMonitor Collector self-monitoring metrics",
         "numerical_features": [
-            # LM metric names (from actual collector data)
+            # Execution performance
             "ExecuteTime",
-            "ThreadCount",
+            "AvgExecTime",
+            "MaxExecTime",
+            "MinExecTime",
+            "CollectTime",
+            "DispatchTime",
+            "ProcessExecuteTime",
+            # Resource utilization
             "CpuUsage",
-            "MemoryUsage",
+            "cpuUsage",
             "HeapUsage",
             "NonHeapUsage",
             "HeapCommit",
             "NonHeapCommit",
+            "MemoryUsed",
             "CollectorMemory",
-            "RunningThreads",
+            # Thread health
+            "ThreadCount",
             "DaemonThreadCount",
-            "CollectTime",
-            "DispatchTime",
-            "ReportTaskCount",
-            "RunningCount",
+            "RunningThreads",
+            "CurrentThreads",
+            "RunnableThreadCnt",
+            # Queue metrics
+            "QueueSize",
+            "QueueLength",
+            "BigQueueSize",
+            "TasksCountInQueue",
+            # Failure indicators
+            "FailRate",
+            "FailureRate",
+            "Failure",
+            "FailExecuteTime",
+            "ExecuteFailed",
+            "EnqueudFailed",
+            # System health
             "Uptime",
-            "cpuUsage",
-            "memUsage",
-            # Standard names (for Precursor compatibility)
-            "HeapMemoryUsage",
-            "NonHeapMemoryUsage",
-            "GCTime",
-            "GCCount",
-            "OpenFileDescriptors",
-            "ProcessCpuLoad",
+            "RunningCount",
+            "ReportTaskCount",
+            "ProcessCount",
+            "InstanceCount",
         ],
         "categorical_features": [
-            "CollectorStatus",
-            "DebugEnabled",
-            "AutoUpdateEnabled",
-            "Status",
-            "status",
+            "Active",
+            "santabaConnection",
+            "persistentQueueStatus",
         ],
     },
+    # Kubernetes/Container Workloads
+    # Datasources: Kubernetes_*, Argus_*, KubeVirt_*
     "kubernetes": {
         "description": "Container orchestration workloads (K8s, ECS, Docker Swarm)",
         "numerical_features": [
-            # LM/Argus metric names
-            "memory_usage_bytes",
-            "memory_resident_bytes",
-            "memory_cached_bytes",
-            "memory_available_bytes",
-            "memory_used_bytes",
-            "memory_unused_bytes",
-            "memory_usage_percent",
+            # CPU metrics
+            "cpuUsageNanoCores",
+            "cpuUsageCoreNanoSeconds",
+            "cpuLimits",
+            "cpuRequests",
             "cpu_usage_seconds",
             "cpu_system_seconds",
             "cpu_user_seconds",
+            # Memory metrics
+            "memoryUsageBytes",
+            "memoryWorkingSetBytes",
+            "memoryRssBytes",
+            "memoryLimits",
+            "memoryRequests",
+            "memoryAvailableBytes",
+            "memoryMajorPageFaults",
+            "memoryPageFaults",
+            "memory_usage_percent",
+            "memory_used_bytes",
+            "memory_available_bytes",
+            "memory_resident_bytes",
+            # Network metrics
+            "networkRxBytes",
+            "networkTxBytes",
+            "networkRxErrors",
+            "networkTxErrors",
             "rx_bytes",
             "tx_bytes",
             "rx_packets",
             "tx_packets",
             "rx_errors",
             "tx_errors",
-            "rx_dropped",
-            "tx_dropped",
+            # Storage metrics
+            "fsUsedBytes",
+            "fsAvailableBytes",
+            "fsCapacityBytes",
+            "volumeUsedBytes",
+            "volumeAvailableBytes",
             "read_bytes",
             "write_bytes",
             "read_iops",
             "write_iops",
-            # Standard names (for Precursor compatibility)
-            "cpuUsageNanoCores",
-            "cpuLimits",
-            "memoryUsageBytes",
-            "memoryWorkingSetBytes",
-            "memoryRssBytes",
-            "memoryLimits",
-            "networkRxBytes",
-            "networkTxBytes",
+            # Pod/Container status
             "kubePodContainerStatusRestartsTotal",
+            "statusRestartCount",
+            "kubeDeploymentStatusReplicas",
+            "kubeDeploymentStatusReplicasAvailable",
+            "kubeDeploymentStatusReplicasReady",
+            # Node metrics
+            "kubeNodeStatusAllocatableCpu",
+            "kubeNodeStatusAllocatableMemory",
+            "kubeNodeStatusCapacityCpu",
+            "kubeNodeStatusCapacityMemory",
         ],
         "categorical_features": [
             "podConditionPhase",
@@ -103,172 +141,164 @@ FEATURE_PROFILES = {
             "kubePodContainerStatusTerminated",
             "healthRunning",
             "healthWaiting",
+            "kubeNodeStatusConditionReady",
+            "kubeDeploymentStatusAvailableTrue",
             "status",
-            "Status",
         ],
     },
+    # Cloud Compute (Windows/Linux VMs)
+    # Datasources: Win*, Microsoft_Windows_*, Linux_OpenMetrics_*
     "cloud_compute": {
         "description": "Cloud virtual machines and compute instances",
         "numerical_features": [
-            # LM metric names (Azure/AWS)
+            # CPU metrics
             "PercentProcessorTime",
             "PercentIdleTime",
-            "PercentDiskReadTime",
-            "PercentDiskWriteTime",
+            "ProcessorQueueLength",
+            "cpuBusySeconds",
+            "cpuIdleSeconds",
+            "cpuUserSeconds",
+            "cpuSystemSeconds",
+            "cpuIowaitSeconds",
+            "load_1",
+            "load_5",
+            "load_15",
+            # Memory metrics
+            "FreePhysicalMemory",
+            "FreeVirtualMemory",
+            "TotalVisibleMemorySize",
+            "TotalVirtualMemorySize",
+            "MemTotal",
+            "MemFree",
+            "MemAvailable",
+            "Cached",
+            "Buffers",
+            "SwapFree",
+            "SwapTotal",
+            "CacheBytes",
+            "PoolNonpagedBytes",
+            "PoolPagedBytes",
+            # Disk metrics
             "DiskReadBytesPerSec",
             "DiskWriteBytesPerSec",
             "DiskReadsPerSec",
             "DiskWritesPerSec",
+            "AvgDiskSecPerRead",
+            "AvgDiskSecPerWrite",
+            "PercentDiskReadTime",
+            "PercentDiskWriteTime",
+            "CurrentDiskQueueLength",
+            "FreeSpace",
+            "Capacity",
+            # Network metrics
             "BytesReceivedPerSec",
             "BytesSentPerSec",
             "PacketsReceivedUnicastPerSec",
             "PacketsSentUnicastPerSec",
-            "AvailableBytes",
-            "CurrentUsage",
-            "QuotaLimit",
-            "AvailableQuota",
-            "UsagePercent",
-            # Standard names (for Precursor compatibility)
-            "cpuUtilization",
-            "memoryUtilization",
-            "diskReadBytes",
-            "diskWriteBytes",
-            "diskReadOps",
-            "diskWriteOps",
-            "networkInBytes",
-            "networkOutBytes",
-            "networkPacketsIn",
-            "networkPacketsOut",
+            "ConnectionsEstablished",
+            "ConnectionsActive",
+            # System metrics
+            "SystemUpTime",
+            "NumberOfProcesses",
         ],
         "categorical_features": [
-            "instanceState",
-            "statusCheckFailed",
-            "statusCheckFailedInstance",
-            "statusCheckFailedSystem",
-            "maintenanceScheduled",
-            "Status",
-            "status",
+            "Active",
+            "isAlive",
         ],
     },
+    # Network Devices (SNMP)
+    # Datasources: SNMP*, WinIf-*, Cisco_*
     "network": {
         "description": "Network devices, switches, routers, firewalls",
         "numerical_features": [
-            # LM metric names (SNMP/network devices)
-            "InCount",
-            "OutCount",
+            # Interface traffic (SNMP standard names)
+            "BytesReceivedPerSec",
+            "BytesSentPerSec",
+            "PacketsReceivedUnicastPerSec",
+            "PacketsSentUnicastPerSec",
+            "PacketsReceivedNonUnicastPerSec",
+            "PacketsSentNonUnicastPerSec",
+            # Interface errors
             "PacketsReceivedDiscarded",
             "PacketsOutboundDiscarded",
-            "DatagramsReceivedPerSec",
-            "DatagramsSentPerSec",
+            # TCP/UDP metrics
             "SegmentsReceivedPerSec",
             "SegmentsSentPerSec",
             "SegmentsRetransmittedPerSec",
+            "DatagramsReceivedPerSec",
+            "DatagramsSentPerSec",
+            "DatagramsReceivedErrors",
             "ConnectionsEstablished",
             "ConnectionsActive",
             "ConnectionsPassive",
             "ConnectionsReset",
-            # Standard names (for Precursor compatibility)
-            "ifInOctets",
-            "ifOutOctets",
-            "ifInErrors",
-            "ifOutErrors",
-            "ifInDiscards",
-            "ifOutDiscards",
-            "ifInUcastPkts",
-            "ifOutUcastPkts",
-            "cpuBusyPercent",
-            "memoryUsedPercent",
+            "ConnectionFailures",
         ],
         "categorical_features": [
-            "ifOperStatus",
-            "ifAdminStatus",
-            "sysUpTimeChanged",
-            "linkDown",
-            "linkUp",
-            "Status",
-            "status",
+            "Active",
+            "isAlive",
         ],
     },
+    # Database (SQL/NoSQL)
+    # Placeholder - add actual LM database datasource metrics when available
     "database": {
         "description": "Database servers and managed database services",
         "numerical_features": [
-            # LM metric names
-            "ConnectionsActive",
+            # Connection metrics
             "ConnectionsEstablished",
-            "CurrentConnections",
-            "CacheHitsRaw",
-            "CacheBytes",
-            "CacheFaultsPerSec",
-            "BufferPoolUsage",
+            "ConnectionsActive",
+            # Query metrics (from collector script cache as proxy)
             "QueryTime",
             "AvgExecTime",
             "MaxExecTime",
-            "MinExecTime",
-            "TotalTime",
-            # Standard names (for Precursor compatibility)
-            "activeConnections",
-            "connectionPoolUsage",
-            "queryExecutionTime",
-            "queryThroughput",
-            "cacheHitRatio",
-            "bufferPoolUsage",
-            "lockWaitTime",
-            "deadlockCount",
-            "replicationLag",
-            "diskSpaceUsed",
+            # Cache metrics
+            "CacheBytes",
+            "cachedEntries",
+            "expiredEntries",
         ],
         "categorical_features": [
-            "serverState",
-            "replicationStatus",
-            "backupStatus",
-            "highAvailabilityState",
-            "maintenanceMode",
-            "Status",
-            "status",
+            "Active",
+            "isAlive",
         ],
     },
+    # Application/Service Monitoring (.NET, IIS, Java)
+    # Datasources: .NetCLR*, Application Pools-, Microsoft_IIS_*
     "application": {
         "description": "Application performance monitoring metrics",
         "numerical_features": [
-            # LM metric names
-            "RequestRate",
-            "ResponseTime",
-            "AverageProcessTime",
-            "MaxProcessTime",
-            "AverageWaitTime",
-            "MaxWaitTime",
-            "QueueLength",
-            "QueueSize",
-            "CurrentThreads",
-            "MaxThreads",
-            "HeapUsage",
-            "HeapCommit",
-            "HeapMax",
-            "TotalRequests_200",
-            "TotalRequests_500",
-            "TotalRequests_503",
-            "ErrorsSystem",
-            "ErrorsLogon",
-            # Standard names (for Precursor compatibility)
-            "requestRate",
-            "errorRate",
-            "responseTime",
-            "responseTimeP50",
-            "responseTimeP95",
-            "responseTimeP99",
-            "activeRequests",
-            "queueDepth",
-            "threadPoolUsage",
-            "heapUsage",
+            # Memory metrics
+            "NumBytesinallHeaps",
+            "BytesinLoaderHeap",
+            # GC metrics
+            "PercentTimeinGC",
+            "NumberGen0Collections",
+            "NumberGen1Collections",
+            "NumberGen2Collections",
+            # Thread metrics
+            "NumberofcurrentlogicalThreads",
+            "NumberofcurrentphysicalThreads",
+            "Numberofcurrentrecognizedthreads",
+            "Numberoftotalrecognizedthreads",
+            "TotalNumberofContentions",
+            # Exception metrics
+            "NumExcepsThrownSec",
+            # IIS metrics
+            "CurrentConnections",
+            "BytesReceivedPerSec",
+            "BytesSentPerSec",
+            "TotalGetRequests",
+            "TotalMethodRequests",
+            "NotFoundErrorsPerSec",
+            "ServiceUptime",
+            # Worker process metrics
+            "CurrentWorkerProcesses",
+            "WorkerProcessesCreated",
+            "TotalWorkerProcessFailures",
+            "CurrentApplicationPoolUptime",
         ],
         "categorical_features": [
-            "serviceHealth",
-            "circuitBreakerState",
-            "deploymentStatus",
-            "featureFlagEnabled",
-            "maintenanceWindow",
-            "Status",
-            "status",
+            "CurrentApplicationPoolState",
+            "Active",
         ],
     },
 }
@@ -276,33 +306,20 @@ FEATURE_PROFILES = {
 
 @dataclass
 class InventoryResponse:
-    """Response structure for /api/ml/inventory."""
+    """Response model for inventory endpoint."""
 
-    metrics: List[Dict[str, Any]] = field(default_factory=list)
-    resources: List[Dict[str, Any]] = field(default_factory=list)
-    datasources: List[Dict[str, Any]] = field(default_factory=list)
-    time_range: Dict[str, Any] = field(default_factory=dict)
-    total_data_points: int = 0
-
-
-@dataclass
-class ProfileCoverage:
-    """Coverage information for a single profile."""
-
-    name: str
-    description: str
-    coverage_percent: float
-    available: List[str]
-    missing: List[str]
-    total_expected: int
-    total_available: int
+    metrics: List[Dict[str, Any]]
+    resources: List[Dict[str, Any]]
+    datasources: List[Dict[str, Any]]
+    time_range: Dict[str, Any]
+    total_data_points: int
 
 
 class MLDataService:
     """Service for ML data operations."""
 
     def __init__(self, pool: asyncpg.Pool):
-        """Initialize with database connection pool."""
+        """Initialize with database pool."""
         self.pool = pool
 
     async def get_inventory(
@@ -310,16 +327,7 @@ class MLDataService:
         datasource: Optional[str] = None,
         resource_type: Optional[str] = None,
     ) -> InventoryResponse:
-        """
-        Get inventory of available metrics, resources, and time ranges.
-
-        Args:
-            datasource: Optional filter by datasource name
-            resource_type: Optional filter by resource type
-
-        Returns:
-            InventoryResponse with available data summary
-        """
+        """Get inventory of available metrics, resources, and time ranges."""
         async with self.pool.acquire() as conn:
             # Get metrics with counts
             metrics_query = """
@@ -327,104 +335,60 @@ class MLDataService:
                     md.name,
                     md.unit,
                     md.metric_type,
-                    d.name as datasource,
-                    COUNT(m.id) as data_points
-                FROM metric_definitions md
-                JOIN datasources d ON md.datasource_id = d.id
-                LEFT JOIN metric_data m ON m.metric_definition_id = md.id
+                    ds.name as datasource,
+                    COUNT(*) as data_points
+                FROM metric_data m
+                JOIN metric_definitions md ON m.metric_definition_id = md.id
+                JOIN datasources ds ON m.datasource_id = ds.id
+                WHERE 1=1
             """
             params = []
-            where_clauses = []
-
             if datasource:
-                where_clauses.append(f"d.name ILIKE ${len(params) + 1}")
-                params.append(f"%{datasource}%")
+                params.append(datasource)
+                metrics_query += f" AND ds.name ILIKE ${len(params)}"
 
-            if where_clauses:
-                metrics_query += " WHERE " + " AND ".join(where_clauses)
-
-            metrics_query += " GROUP BY md.id, md.name, md.unit, md.metric_type, d.name ORDER BY data_points DESC"
-
+            metrics_query += " GROUP BY md.name, md.unit, md.metric_type, ds.name"
             metrics = await conn.fetch(metrics_query, *params)
 
-            # Get resources with data point counts
+            # Get resources
             resources_query = """
                 SELECT
                     r.id,
-                    r.attributes->>'host.name' as host_name,
-                    r.attributes->>'service.name' as service_name,
-                    r.attributes as attributes,
+                    r.attributes->>'hostName' as host_name,
+                    r.attributes->>'serviceName' as service_name,
                     COUNT(m.id) as data_points
                 FROM resources r
-                LEFT JOIN metric_data m ON m.resource_id = r.id
-                GROUP BY r.id, r.attributes
-                ORDER BY data_points DESC
-                LIMIT 100
+                LEFT JOIN metric_data m ON r.id = m.resource_id
+                GROUP BY r.id
             """
             resources = await conn.fetch(resources_query)
 
             # Get datasources
             datasources_query = """
-                SELECT
-                    d.id,
-                    d.name,
-                    d.version,
-                    COUNT(DISTINCT md.id) as metric_count,
-                    COUNT(m.id) as data_points
-                FROM datasources d
-                LEFT JOIN metric_definitions md ON md.datasource_id = d.id
-                LEFT JOIN metric_data m ON m.metric_definition_id = md.id
-                GROUP BY d.id, d.name, d.version
+                SELECT DISTINCT ds.name, COUNT(m.id) as data_points
+                FROM datasources ds
+                LEFT JOIN metric_data m ON ds.id = m.datasource_id
+                GROUP BY ds.name
                 ORDER BY data_points DESC
             """
             datasources = await conn.fetch(datasources_query)
 
             # Get time range
-            time_range_query = """
-                SELECT
-                    MIN(timestamp) as min_ts,
-                    MAX(timestamp) as max_ts
+            time_range = await conn.fetchrow("""
+                SELECT MIN(timestamp) as min_ts, MAX(timestamp) as max_ts
                 FROM metric_data
-            """
-            time_range = await conn.fetchrow(time_range_query)
+            """)
 
-            # Get total data points
-            total_query = "SELECT COUNT(*) FROM metric_data"
-            total = await conn.fetchval(total_query)
+            # Get total count
+            total = await conn.fetchval("SELECT COUNT(*) FROM metric_data")
 
             return InventoryResponse(
-                metrics=[
-                    {
-                        "name": m["name"],
-                        "unit": m["unit"],
-                        "type": m["metric_type"],
-                        "datasource": m["datasource"],
-                        "data_points": m["data_points"],
-                    }
-                    for m in metrics
-                ],
-                resources=[
-                    {
-                        "id": r["id"],
-                        "host_name": r["host_name"],
-                        "service_name": r["service_name"],
-                        "data_points": r["data_points"],
-                    }
-                    for r in resources
-                ],
-                datasources=[
-                    {
-                        "id": d["id"],
-                        "name": d["name"],
-                        "version": d["version"],
-                        "metric_count": d["metric_count"],
-                        "data_points": d["data_points"],
-                    }
-                    for d in datasources
-                ],
+                metrics=[dict(m) for m in metrics],
+                resources=[dict(r) for r in resources],
+                datasources=[dict(d) for d in datasources],
                 time_range={
-                    "start": time_range["min_ts"].isoformat() if time_range and time_range["min_ts"] else None,
-                    "end": time_range["max_ts"].isoformat() if time_range and time_range["max_ts"] else None,
+                    "start": time_range["min_ts"].isoformat() if time_range["min_ts"] else None,
+                    "end": time_range["max_ts"].isoformat() if time_range["max_ts"] else None,
                 },
                 total_data_points=total or 0,
             )
@@ -438,73 +402,67 @@ class MLDataService:
         limit: int = 10000,
         offset: int = 0,
     ) -> Dict[str, Any]:
-        """
-        Get training data in Precursor-compatible format.
-
-        Args:
-            start_time: Start of time range (default: 24 hours ago)
-            end_time: End of time range (default: now)
-            profile: Feature profile to filter metrics
-            resource_id: Optional resource ID filter
-            limit: Maximum records to return
-            offset: Pagination offset
-
-        Returns:
-            Training data records with metadata
-        """
-        if not start_time:
-            start_time = datetime.now(timezone.utc) - timedelta(hours=24)
-        if not end_time:
+        """Get training data in Precursor-compatible format."""
+        if start_time is None:
+            start_time = datetime.now(timezone.utc) - timedelta(days=7)
+        if end_time is None:
             end_time = datetime.now(timezone.utc)
 
         async with self.pool.acquire() as conn:
-            # Build query with filters
+            # Build query
             query = """
                 SELECT
-                    r.id AS resource_id,
-                    r.attributes->>'host.name' AS host_name,
-                    r.attributes->>'service.name' AS service_name,
-                    md.name AS metric_name,
+                    m.resource_id,
+                    r.attributes->>'hostName' as host_name,
+                    r.attributes->>'serviceName' as service_name,
+                    md.name as metric_name,
                     m.timestamp,
-                    COALESCE(m.value_double, m.value_int::float) AS value,
-                    m.attributes->>'dataSourceInstanceName' AS datasource_instance,
-                    d.name AS datasource_name
+                    COALESCE(m.value_double, m.value_int::float) as value,
+                    m.attributes->>'dataSourceInstanceName' as datasource_instance,
+                    ds.name as datasource_name
                 FROM metric_data m
                 JOIN resources r ON m.resource_id = r.id
                 JOIN metric_definitions md ON m.metric_definition_id = md.id
-                JOIN datasources d ON md.datasource_id = d.id
+                JOIN datasources ds ON m.datasource_id = ds.id
                 WHERE m.timestamp >= $1 AND m.timestamp <= $2
             """
             params = [start_time, end_time]
-            param_idx = 3
 
-            # Filter by profile metrics
+            # Filter by profile metrics if specified
             if profile and profile in FEATURE_PROFILES:
-                profile_metrics = (
-                    FEATURE_PROFILES[profile]["numerical_features"]
-                    + FEATURE_PROFILES[profile]["categorical_features"]
+                profile_def = FEATURE_PROFILES[profile]
+                all_features = (
+                    profile_def["numerical_features"] +
+                    profile_def["categorical_features"]
                 )
-                query += f" AND md.name = ANY(${param_idx})"
-                params.append(profile_metrics)
-                param_idx += 1
+                params.append(all_features)
+                query += f" AND md.name = ANY(${len(params)})"
 
-            # Filter by resource
             if resource_id:
-                query += f" AND r.id = ${param_idx}"
                 params.append(resource_id)
-                param_idx += 1
+                query += f" AND m.resource_id = ${len(params)}"
 
-            query += f" ORDER BY r.id, m.timestamp, md.name LIMIT ${param_idx} OFFSET ${param_idx + 1}"
-            params.extend([limit, offset])
+            query += " ORDER BY m.resource_id, m.timestamp, md.name"
+            query += f" LIMIT {limit} OFFSET {offset}"
 
-            data = await conn.fetch(query, *params)
+            rows = await conn.fetch(query, *params)
 
             # Get total count for pagination
             count_query = """
                 SELECT COUNT(*) FROM metric_data m
+                JOIN metric_definitions md ON m.metric_definition_id = md.id
                 WHERE m.timestamp >= $1 AND m.timestamp <= $2
             """
-            total = await conn.fetchval(count_query, start_time, end_time)
+            count_params = [start_time, end_time]
+            if profile and profile in FEATURE_PROFILES:
+                profile_def = FEATURE_PROFILES[profile]
+                all_features = (
+                    profile_def["numerical_features"] +
+                    profile_def["categorical_features"]
+                )
+                count_params.append(all_features)
+                count_query += f" AND md.name = ANY(${len(count_params)})"
+            total = await conn.fetchval(count_query, *count_params)
 
             return {
                 "data": [
@@ -518,17 +476,15 @@ class MLDataService:
                         "datasource_instance": row["datasource_instance"],
                         "datasource_name": row["datasource_name"],
                     }
-                    for row in data
+                    for row in rows
                 ],
                 "meta": {
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
                     "start_time": start_time.isoformat(),
                     "end_time": end_time.isoformat(),
                     "profile": profile,
-                    "resource_id": resource_id,
-                    "limit": limit,
-                    "offset": offset,
-                    "returned": len(data),
-                    "total": total,
                 },
             }
 
@@ -536,19 +492,13 @@ class MLDataService:
         self,
         profile: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Check coverage of available metrics against feature profiles.
-
-        Args:
-            profile: Optional single profile to check (default: all profiles)
-
-        Returns:
-            Coverage information for each profile
-        """
+        """Check coverage of available metrics against feature profiles."""
         async with self.pool.acquire() as conn:
-            # Get all available metric names
-            metrics_query = "SELECT DISTINCT name FROM metric_definitions"
-            available_metrics = {row["name"] for row in await conn.fetch(metrics_query)}
+            # Get all unique metric names in the database
+            available_metrics = await conn.fetch(
+                "SELECT DISTINCT name FROM metric_definitions"
+            )
+            available_set = {m["name"] for m in available_metrics}
 
             profiles_to_check = (
                 {profile: FEATURE_PROFILES[profile]}
@@ -556,42 +506,27 @@ class MLDataService:
                 else FEATURE_PROFILES
             )
 
-            coverages = []
-            for profile_name, profile_def in profiles_to_check.items():
-                expected = set(
-                    profile_def["numerical_features"]
-                    + profile_def["categorical_features"]
+            result = {"profiles": []}
+
+            for name, profile_def in profiles_to_check.items():
+                all_features = (
+                    profile_def["numerical_features"] +
+                    profile_def["categorical_features"]
                 )
-                available = expected & available_metrics
-                missing = expected - available_metrics
+                available = [f for f in all_features if f in available_set]
+                missing = [f for f in all_features if f not in available_set]
 
-                coverage_pct = (len(available) / len(expected) * 100) if expected else 0
+                result["profiles"].append({
+                    "name": name,
+                    "description": profile_def["description"],
+                    "coverage_percent": (
+                        len(available) / len(all_features) * 100
+                        if all_features else 0
+                    ),
+                    "available": available,
+                    "missing": missing,
+                    "total_expected": len(all_features),
+                    "total_available": len(available),
+                })
 
-                coverages.append(
-                    ProfileCoverage(
-                        name=profile_name,
-                        description=profile_def["description"],
-                        coverage_percent=round(coverage_pct, 1),
-                        available=sorted(available),
-                        missing=sorted(missing),
-                        total_expected=len(expected),
-                        total_available=len(available),
-                    )
-                )
-
-            return {
-                "profiles": [
-                    {
-                        "name": c.name,
-                        "description": c.description,
-                        "coverage_percent": c.coverage_percent,
-                        "available": c.available,
-                        "missing": c.missing,
-                        "total_expected": c.total_expected,
-                        "total_available": c.total_available,
-                    }
-                    for c in coverages
-                ],
-                "available_metrics": sorted(available_metrics),
-                "total_metrics": len(available_metrics),
-            }
+            return result
