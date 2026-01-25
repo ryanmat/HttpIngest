@@ -11,6 +11,7 @@ This module provides endpoints for:
 - Feature profile definitions (mirrors Precursor's config/features.yaml)
 """
 
+import math
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
@@ -663,14 +664,25 @@ class MLDataService:
 
             range_rows = await conn.fetch(range_query, *range_params)
 
+            def safe_round(val: Any, decimals: int = 4) -> Optional[float]:
+                """Round a value, returning None for NaN or None."""
+                if val is None:
+                    return None
+                try:
+                    if math.isnan(val) or math.isinf(val):
+                        return None
+                    return round(val, decimals)
+                except (TypeError, ValueError):
+                    return None
+
             ranges_data = [
                 {
                     "metric_name": row["metric_name"],
                     "sample_count": row["sample_count"],
-                    "avg_value": round(row["avg_value"], 4) if row["avg_value"] else None,
-                    "min_value": round(row["min_value"], 4) if row["min_value"] else None,
-                    "max_value": round(row["max_value"], 4) if row["max_value"] else None,
-                    "stddev": round(row["stddev"], 4) if row["stddev"] else None,
+                    "avg_value": safe_round(row["avg_value"]),
+                    "min_value": safe_round(row["min_value"]),
+                    "max_value": safe_round(row["max_value"]),
+                    "stddev": safe_round(row["stddev"]),
                 }
                 for row in range_rows
             ]
