@@ -340,7 +340,7 @@ class MLDataService:
                     COUNT(*) as data_points
                 FROM metric_data m
                 JOIN metric_definitions md ON m.metric_definition_id = md.id
-                JOIN datasources ds ON m.datasource_id = ds.id
+                JOIN datasources ds ON md.datasource_id = ds.id
                 WHERE 1=1
             """
             params = []
@@ -368,7 +368,8 @@ class MLDataService:
             datasources_query = """
                 SELECT DISTINCT ds.name, COUNT(m.id) as data_points
                 FROM datasources ds
-                LEFT JOIN metric_data m ON ds.id = m.datasource_id
+                LEFT JOIN metric_definitions md ON ds.id = md.datasource_id
+                LEFT JOIN metric_data m ON md.id = m.metric_definition_id
                 GROUP BY ds.name
                 ORDER BY data_points DESC
             """
@@ -424,7 +425,7 @@ class MLDataService:
                 FROM metric_data m
                 JOIN resources r ON m.resource_id = r.id
                 JOIN metric_definitions md ON m.metric_definition_id = md.id
-                JOIN datasources ds ON m.datasource_id = ds.id
+                JOIN datasources ds ON md.datasource_id = ds.id
                 WHERE m.timestamp >= $1 AND m.timestamp <= $2
             """
             params = [start_time, end_time]

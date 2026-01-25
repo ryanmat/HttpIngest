@@ -20,7 +20,10 @@
 ### Medium Priority
 
 - [x] Update api-documentation.md with ML endpoints (v21)
-- [ ] Add integration tests for ML endpoints with real database
+- [x] Add integration tests for ML endpoints with real database
+  - 32 async integration tests covering inventory, training-data, profile-coverage, quality
+  - Performance tests verify sub-5s response times
+  - Fixed SQL column references in ml_service.py (md.datasource_id joins)
 - [ ] Performance benchmarking with production data
 
 ### Low Priority
