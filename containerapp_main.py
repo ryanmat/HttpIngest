@@ -37,6 +37,7 @@ from src.exporters import (
 )
 from src.otlp_parser import parse_otlp
 from src.data_processor_async import AsyncDataProcessor
+from src.ml_service import MLDataService, FEATURE_PROFILES
 
 # Configure logging
 logging.basicConfig(
@@ -164,7 +165,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LogicMonitor Data Pipeline",
     description="Unified data pipeline for LogicMonitor metrics",
-    version="13.1-no-streaming",
+    version="14.0.0",
     lifespan=lifespan
 )
 
@@ -492,6 +493,156 @@ async def json_export(
     except Exception as e:
         logger.error(f"JSON export error: {e}")
         return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+# ============================================================================
+# ML DATA SERVICE ENDPOINTS (for Precursor integration)
+# ============================================================================
+
+
+@app.get("/api/ml/inventory")
+async def ml_inventory(
+    datasource: Optional[str] = Query(None, description="Filter by datasource name"),
+    resource_type: Optional[str] = Query(None, description="Filter by resource type"),
+):
+    """
+    Get inventory of available metrics, resources, and time ranges.
+
+    Returns summary of all data available for ML training, including:
+    - List of metrics with data point counts
+    - List of resources with hostnames
+    - Available datasources
+    - Time range of available data
+    """
+    try:
+        if not db_pool:
+            return JSONResponse(content={"error": "Database not available"}, status_code=503)
+
+        service = MLDataService(db_pool)
+        inventory = await service.get_inventory(datasource=datasource, resource_type=resource_type)
+
+        return JSONResponse(content={
+            "metrics": inventory.metrics,
+            "resources": inventory.resources,
+            "datasources": inventory.datasources,
+            "time_range": inventory.time_range,
+            "total_data_points": inventory.total_data_points,
+        })
+    except Exception as e:
+        logger.error(f"ML inventory error: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/ml/training-data")
+async def ml_training_data(
+    start_time: Optional[str] = Query(None, description="Start time (ISO 8601)"),
+    end_time: Optional[str] = Query(None, description="End time (ISO 8601)"),
+    profile: Optional[str] = Query(None, description="Feature profile filter"),
+    resource_id: Optional[int] = Query(None, description="Resource ID filter"),
+    limit: int = Query(10000, description="Maximum records to return", le=100000),
+    offset: int = Query(0, description="Pagination offset"),
+):
+    """
+    Get training data in Precursor-compatible format.
+
+    Returns metric data formatted for Precursor ML training:
+    - resource_id, host_name, service_name
+    - metric_name, timestamp, value
+    - datasource information
+
+    Use 'profile' parameter to filter to specific feature profiles:
+    - collector: LogicMonitor Collector metrics
+    - kubernetes: Container/K8s metrics
+    - cloud_compute: AWS/Azure VM metrics
+    - network: SNMP network device metrics
+    - database: SQL/NoSQL metrics
+    - application: APM metrics
+    """
+    try:
+        if not db_pool:
+            return JSONResponse(content={"error": "Database not available"}, status_code=503)
+
+        # Validate profile if provided
+        if profile and profile not in FEATURE_PROFILES:
+            return JSONResponse(
+                content={
+                    "error": f"Unknown profile: {profile}",
+                    "available_profiles": list(FEATURE_PROFILES.keys()),
+                },
+                status_code=400,
+            )
+
+        service = MLDataService(db_pool)
+        result = await service.get_training_data(
+            start_time=datetime.fromisoformat(start_time) if start_time else None,
+            end_time=datetime.fromisoformat(end_time) if end_time else None,
+            profile=profile,
+            resource_id=resource_id,
+            limit=limit,
+            offset=offset,
+        )
+
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"ML training data error: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/ml/profile-coverage")
+async def ml_profile_coverage(
+    profile: Optional[str] = Query(None, description="Single profile to check"),
+):
+    """
+    Check coverage of available metrics against feature profiles.
+
+    Returns for each profile:
+    - coverage_percent: Percentage of expected metrics available
+    - available: List of expected metrics that exist in database
+    - missing: List of expected metrics not found in database
+
+    Use this to understand which profiles can be trained with current data.
+    """
+    try:
+        if not db_pool:
+            return JSONResponse(content={"error": "Database not available"}, status_code=503)
+
+        # Validate profile if provided
+        if profile and profile not in FEATURE_PROFILES:
+            return JSONResponse(
+                content={
+                    "error": f"Unknown profile: {profile}",
+                    "available_profiles": list(FEATURE_PROFILES.keys()),
+                },
+                status_code=400,
+            )
+
+        service = MLDataService(db_pool)
+        result = await service.get_profile_coverage(profile=profile)
+
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"ML profile coverage error: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
+@app.get("/api/ml/profiles")
+async def ml_profiles():
+    """
+    List available feature profiles and their expected metrics.
+
+    Returns all defined profiles with their numerical and categorical features.
+    """
+    return JSONResponse(content={
+        "profiles": {
+            name: {
+                "description": profile["description"],
+                "numerical_features": profile["numerical_features"],
+                "categorical_features": profile["categorical_features"],
+                "total_features": len(profile["numerical_features"]) + len(profile["categorical_features"]),
+            }
+            for name, profile in FEATURE_PROFILES.items()
+        }
+    })
 
 
 if __name__ == "__main__":
