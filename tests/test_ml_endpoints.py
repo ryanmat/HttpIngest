@@ -121,6 +121,54 @@ class TestMLDataServiceUnit:
         assert len(result["profiles"]) == 1
         assert result["profiles"][0]["name"] == "kubernetes"
 
+    @pytest.mark.asyncio
+    async def test_get_data_quality_returns_summary(self, mock_pool):
+        """Service should return quality summary."""
+        pool, conn = mock_pool
+        # Mock freshness query
+        conn.fetch.side_effect = [
+            [{"resource_id": 1, "host_name": "host1", "last_update": datetime.now(timezone.utc), "data_points": 100}],
+            [],  # gaps
+            [{"metric_name": "ExecuteTime", "sample_count": 100, "avg_value": 50.0, "min_value": 10.0, "max_value": 90.0, "stddev": 15.0}],
+        ]
+
+        service = MLDataService(pool)
+        result = await service.get_data_quality()
+
+        assert "summary" in result
+        assert "freshness" in result
+        assert "gaps" in result
+        assert "ranges" in result
+        assert "overall_score" in result["summary"]
+
+    @pytest.mark.asyncio
+    async def test_get_data_quality_detects_stale_resources(self, mock_pool):
+        """Service should detect stale resources."""
+        pool, conn = mock_pool
+        stale_time = datetime.now(timezone.utc) - timedelta(minutes=30)
+        conn.fetch.side_effect = [
+            [{"resource_id": 1, "host_name": "stale-host", "last_update": stale_time, "data_points": 50}],
+            [],
+            [],
+        ]
+
+        service = MLDataService(pool)
+        result = await service.get_data_quality()
+
+        assert result["summary"]["stale_resources"] == 1
+        assert result["freshness"][0]["is_stale"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_data_quality_with_profile_filter(self, mock_pool):
+        """Service should filter by profile."""
+        pool, conn = mock_pool
+        conn.fetch.side_effect = [[], [], []]
+
+        service = MLDataService(pool)
+        result = await service.get_data_quality(profile="collector")
+
+        assert result["summary"]["profile"] == "collector"
+
 
 # ============================================================================
 # Unit Tests - Feature Profiles

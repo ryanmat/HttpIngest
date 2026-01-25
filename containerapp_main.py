@@ -645,6 +645,36 @@ async def ml_profiles():
     })
 
 
+@app.get("/api/ml/quality")
+async def ml_quality(
+    profile: Optional[str] = Query(None, description="Filter by profile name"),
+    hours: int = Query(24, ge=1, le=168, description="Lookback period in hours"),
+):
+    """
+    Assess data quality for ML training readiness.
+
+    Returns quality metrics including:
+    - freshness: Time since last data point per resource
+    - gaps: Detected gaps in time series data (>10 min)
+    - ranges: Value statistics per metric
+    - summary: Overall quality score (0-100)
+    """
+    if db_pool is None:
+        return JSONResponse(
+            content={"error": "Database not available"},
+            status_code=503,
+        )
+
+    try:
+        service = MLDataService(db_pool)
+        result = await service.get_data_quality(profile=profile, hours=hours)
+
+        return JSONResponse(content=result)
+    except Exception as e:
+        logger.error(f"ML quality check error: {e}", exc_info=True)
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

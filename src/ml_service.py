@@ -530,3 +530,180 @@ class MLDataService:
                 })
 
             return result
+
+    async def get_data_quality(
+        self,
+        profile: Optional[str] = None,
+        hours: int = 24,
+    ) -> Dict[str, Any]:
+        """
+        Assess data quality for ML training readiness.
+
+        Returns:
+        - freshness: Time since last data point per resource
+        - gaps: Detected gaps in time series data
+        - ranges: Value range statistics and anomalies
+        - summary: Overall quality score
+        """
+        async with self.pool.acquire() as conn:
+            now = datetime.now(timezone.utc)
+            lookback = now - timedelta(hours=hours)
+
+            # Get profile metrics if specified
+            metric_filter = None
+            if profile and profile in FEATURE_PROFILES:
+                profile_def = FEATURE_PROFILES[profile]
+                metric_filter = (
+                    profile_def["numerical_features"] +
+                    profile_def["categorical_features"]
+                )
+
+            # Freshness: Last update time per resource
+            freshness_query = """
+                SELECT
+                    r.id as resource_id,
+                    r.attributes->>'hostName' as host_name,
+                    MAX(m.timestamp) as last_update,
+                    COUNT(*) as data_points
+                FROM metric_data m
+                JOIN resources r ON m.resource_id = r.id
+                JOIN metric_definitions md ON m.metric_definition_id = md.id
+                WHERE m.timestamp >= $1
+            """
+            params: List[Any] = [lookback]
+            if metric_filter:
+                params.append(metric_filter)
+                freshness_query += f" AND md.name = ANY(${len(params)})"
+            freshness_query += " GROUP BY r.id ORDER BY last_update DESC"
+
+            freshness_rows = await conn.fetch(freshness_query, *params)
+
+            freshness_data = []
+            stale_resources = 0
+            for row in freshness_rows:
+                last_update = row["last_update"]
+                age_minutes = (now - last_update).total_seconds() / 60
+                is_stale = age_minutes > 10  # Stale if no data in 10 minutes
+                if is_stale:
+                    stale_resources += 1
+                freshness_data.append({
+                    "resource_id": row["resource_id"],
+                    "host_name": row["host_name"],
+                    "last_update": last_update.isoformat(),
+                    "age_minutes": round(age_minutes, 1),
+                    "data_points": row["data_points"],
+                    "is_stale": is_stale,
+                })
+
+            # Gap detection: Find time periods with missing data
+            gap_query = """
+                WITH time_diffs AS (
+                    SELECT
+                        r.id as resource_id,
+                        r.attributes->>'hostName' as host_name,
+                        m.timestamp,
+                        LAG(m.timestamp) OVER (
+                            PARTITION BY r.id ORDER BY m.timestamp
+                        ) as prev_timestamp
+                    FROM metric_data m
+                    JOIN resources r ON m.resource_id = r.id
+                    JOIN metric_definitions md ON m.metric_definition_id = md.id
+                    WHERE m.timestamp >= $1
+            """
+            gap_params: List[Any] = [lookback]
+            if metric_filter:
+                gap_params.append(metric_filter)
+                gap_query += f" AND md.name = ANY(${len(gap_params)})"
+            gap_query += """
+                )
+                SELECT
+                    resource_id,
+                    host_name,
+                    prev_timestamp as gap_start,
+                    timestamp as gap_end,
+                    EXTRACT(EPOCH FROM (timestamp - prev_timestamp)) / 60 as gap_minutes
+                FROM time_diffs
+                WHERE prev_timestamp IS NOT NULL
+                  AND EXTRACT(EPOCH FROM (timestamp - prev_timestamp)) > 600
+                ORDER BY gap_minutes DESC
+                LIMIT 50
+            """
+
+            gap_rows = await conn.fetch(gap_query, *gap_params)
+
+            gaps_data = [
+                {
+                    "resource_id": row["resource_id"],
+                    "host_name": row["host_name"],
+                    "gap_start": row["gap_start"].isoformat(),
+                    "gap_end": row["gap_end"].isoformat(),
+                    "gap_minutes": round(row["gap_minutes"], 1),
+                }
+                for row in gap_rows
+            ]
+
+            # Value ranges: Statistics per metric
+            range_query = """
+                SELECT
+                    md.name as metric_name,
+                    COUNT(*) as sample_count,
+                    AVG(COALESCE(m.value_double, m.value_int::float)) as avg_value,
+                    MIN(COALESCE(m.value_double, m.value_int::float)) as min_value,
+                    MAX(COALESCE(m.value_double, m.value_int::float)) as max_value,
+                    STDDEV(COALESCE(m.value_double, m.value_int::float)) as stddev
+                FROM metric_data m
+                JOIN metric_definitions md ON m.metric_definition_id = md.id
+                WHERE m.timestamp >= $1
+            """
+            range_params: List[Any] = [lookback]
+            if metric_filter:
+                range_params.append(metric_filter)
+                range_query += f" AND md.name = ANY(${len(range_params)})"
+            range_query += " GROUP BY md.name ORDER BY sample_count DESC"
+
+            range_rows = await conn.fetch(range_query, *range_params)
+
+            ranges_data = [
+                {
+                    "metric_name": row["metric_name"],
+                    "sample_count": row["sample_count"],
+                    "avg_value": round(row["avg_value"], 4) if row["avg_value"] else None,
+                    "min_value": round(row["min_value"], 4) if row["min_value"] else None,
+                    "max_value": round(row["max_value"], 4) if row["max_value"] else None,
+                    "stddev": round(row["stddev"], 4) if row["stddev"] else None,
+                }
+                for row in range_rows
+            ]
+
+            # Calculate quality score
+            total_resources = len(freshness_data)
+            fresh_resources = total_resources - stale_resources
+            freshness_score = (fresh_resources / total_resources * 100) if total_resources > 0 else 0
+
+            total_gaps = len(gaps_data)
+            gap_score = max(0, 100 - (total_gaps * 5))  # -5 points per gap, min 0
+
+            total_metrics = len(ranges_data)
+            metrics_with_data = sum(1 for r in ranges_data if r["sample_count"] >= 10)
+            coverage_score = (metrics_with_data / total_metrics * 100) if total_metrics > 0 else 0
+
+            overall_score = (freshness_score + gap_score + coverage_score) / 3
+
+            return {
+                "summary": {
+                    "overall_score": round(overall_score, 1),
+                    "freshness_score": round(freshness_score, 1),
+                    "gap_score": round(gap_score, 1),
+                    "coverage_score": round(coverage_score, 1),
+                    "total_resources": total_resources,
+                    "stale_resources": stale_resources,
+                    "total_gaps": total_gaps,
+                    "total_metrics": total_metrics,
+                    "lookback_hours": hours,
+                    "profile": profile,
+                    "checked_at": now.isoformat(),
+                },
+                "freshness": freshness_data[:20],  # Top 20 most recent
+                "gaps": gaps_data,
+                "ranges": ranges_data[:30],  # Top 30 by sample count
+            }
