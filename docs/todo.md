@@ -19,7 +19,7 @@
 
 ### Medium Priority
 
-- [ ] Update api-documentation.md with ML endpoints
+- [x] Update api-documentation.md with ML endpoints (v21)
 - [ ] Add integration tests for ML endpoints with real database
 - [ ] Performance benchmarking with production data
 
