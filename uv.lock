@@ -895,7 +895,7 @@ wheels = [
 
 [[package]]
 name = "httpingest"
-version = "14.0.0"
+version = "22.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "alembic" },
