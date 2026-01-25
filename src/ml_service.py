@@ -588,11 +588,11 @@ class MLDataService:
                 if is_stale:
                     stale_resources += 1
                 freshness_data.append({
-                    "resource_id": row["resource_id"],
+                    "resource_id": int(row["resource_id"]),
                     "host_name": row["host_name"],
                     "last_update": last_update.isoformat(),
                     "age_minutes": round(age_minutes, 1),
-                    "data_points": row["data_points"],
+                    "data_points": int(row["data_points"]),
                     "is_stale": is_stale,
                 })
 
@@ -634,7 +634,7 @@ class MLDataService:
 
             gaps_data = [
                 {
-                    "resource_id": row["resource_id"],
+                    "resource_id": int(row["resource_id"]),
                     "host_name": row["host_name"],
                     "gap_start": row["gap_start"].isoformat(),
                     "gap_end": row["gap_end"].isoformat(),
@@ -680,7 +680,7 @@ class MLDataService:
             ranges_data = [
                 {
                     "metric_name": row["metric_name"],
-                    "sample_count": row["sample_count"],
+                    "sample_count": int(row["sample_count"]),
                     "avg_value": safe_round(row["avg_value"]),
                     "min_value": safe_round(row["min_value"]),
                     "max_value": safe_round(row["max_value"]),
