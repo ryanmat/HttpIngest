@@ -1,10 +1,13 @@
+# Description: Deployment guide for HttpIngest Azure Container App.
+# Description: Covers building, deploying, and managing the Data Lake ingestion pipeline.
+
 # Deployment Guide
 
 **Production System:** Azure Container App receiving live LogicMonitor OTLP data
 
 ## Overview
 
-This project deploys to Azure Container Apps using Azure Container Registry (ACR) for Docker image builds. Database authentication uses Azure AD tokens (90-minute expiration).
+HttpIngest runs in **Data Lake only mode** - all OTLP metrics are written to Azure Data Lake Gen2 as Parquet files. No PostgreSQL database is required.
 
 ## Infrastructure
 
@@ -12,295 +15,119 @@ This project deploys to Azure Container Apps using Azure Container Registry (ACR
 - **Container Registry:** `acrctalmhttps001`
 - **Container App:** `ca-cta-lm-ingest`
 - **Resource Group:** `CTA_Resource_Group`
-- **Database:** Azure PostgreSQL 17.5 with Azure AD authentication
-- **Current Version:** v15
+- **Data Lake:** `stlmingestdatalake` (Azure Data Lake Gen2)
+- **Current Version:** v29
 
 **Endpoints:**
 - Health: `https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health`
 - Ingest: `https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/HttpIngest`
 
-## Deployment Methods
-
-### Method 1: Automated Script (Recommended)
-
-Use the deployment script for one-command deployment:
+## Quick Deploy
 
 ```bash
-# Deploy latest code from feature branch
-./scripts/deploy.sh v11
+# 1. Build image in ACR
+az acr build --registry acrctalmhttps001 \
+  --image httpingest:v30 \
+  --file Dockerfile.containerapp .
 
-# Deploy from specific branch
-./scripts/deploy.sh v11 main
-
-# Deploy from feature branch (default)
-./scripts/deploy.sh v11 feature/production-redesign
-```
-
-**What it does:**
-1. Builds Docker image in ACR from GitHub repository
-2. Gets fresh Azure AD access token
-3. Deploys to Container App with new image and token
-4. Runs health check
-5. Displays deployment summary
-
-**Prerequisites:**
-- Azure CLI installed and logged in (`az login`)
-- Access to resource group and container registry
-- Executable permissions (`chmod +x scripts/deploy.sh`)
-
-### Method 2: GitHub Actions (Automated CI/CD)
-
-GitHub Actions automatically deploys on push to `feature/production-redesign` or `main`:
-
-**Automatic Deployment:**
-```bash
-git push origin feature/production-redesign
-# GitHub Actions triggers automatically
-```
-
-**Manual Trigger:**
-1. Go to GitHub → Actions → "Deploy to Azure Container App"
-2. Click "Run workflow"
-3. Enter version (e.g., v11)
-4. Click "Run workflow"
-
-**Setup Required:**
-Add Azure credentials as GitHub secret `AZURE_CREDENTIALS`:
-
-```bash
-# Create service principal
-az ad sp create-for-rbac \
-  --name "github-actions-lm-ingest" \
-  --role contributor \
-  --scopes /subscriptions/{subscription-id}/resourceGroups/CTA_Resource_Group \
-  --sdk-auth
-```
-
-Copy the JSON output and add to GitHub:
-- Repository → Settings → Secrets and variables → Actions
-- New repository secret: `AZURE_CREDENTIALS`
-- Paste the JSON
-
-### Method 3: Manual Deployment
-
-For complete control or troubleshooting:
-
-#### Step 1: Build Docker Image
-
-```bash
-az acr build \
-  --registry acrctalmhttps001 \
+# 2. Deploy to Container App
+az containerapp update --name ca-cta-lm-ingest \
   --resource-group CTA_Resource_Group \
-  --image lm-http-ingest:v11 \
-  --file Dockerfile \
-  https://github.com/ryanmat/HttpIngest.git#feature/production-redesign
-```
+  --image acrctalmhttps001.azurecr.io/httpingest:v30
 
-#### Step 2: Get Azure AD Token
-
-```bash
-TOKEN=$(az account get-access-token \
-  --resource-type oss-rdbms \
-  --query accessToken \
-  --output tsv)
-
-echo "Token acquired (expires in 90 minutes)"
-```
-
-#### Step 3: Deploy to Container App
-
-```bash
-az containerapp update \
-  --name ca-cta-lm-ingest \
-  --resource-group CTA_Resource_Group \
-  --image acrctalmhttps001.azurecr.io/lm-http-ingest:v11 \
-  --set-env-vars "PGPASSWORD=$TOKEN" \
-  --revision-suffix v11
-```
-
-#### Step 4: Verify Deployment
-
-```bash
-# Check health endpoint
+# 3. Verify health
 curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health
-
-# Check container app status
-az containerapp revision list \
-  --name ca-cta-lm-ingest \
-  --resource-group CTA_Resource_Group \
-  --output table
 ```
 
-## Testing Deployment
+## Environment Variables
 
-### Health Check
+**Required (set on Container App):**
+- `HOT_CACHE_ENABLED=false` - Disables PostgreSQL hot cache
+- `SYNAPSE_ENABLED=false` - Disables Synapse analytics
+- `ENABLE_COLLECTOR_PUBLISHER=true` - Enables LogicMonitor collector data
+
+**Data Lake Configuration (managed by Azure):**
+- Uses managed identity for authentication
+- Account: `stlmingestdatalake`
+- Container: Configured via DataLakeConfig
+
+## Scaling
+
+Current configuration:
+- Min replicas: 1
+- Max replicas: 5
+- Auto-scale on: HTTP concurrent requests (10 per replica)
+
+To adjust:
+```bash
+az containerapp update --name ca-cta-lm-ingest \
+  --resource-group CTA_Resource_Group \
+  --min-replicas 1 --max-replicas 10
+```
+
+## Health Check
 
 ```bash
-curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health
+curl -s https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health | jq .
 ```
 
 **Expected Response:**
 ```json
 {
   "status": "healthy",
-  "timestamp": "2025-11-14T20:00:00Z"
+  "mode": "datalake_only",
+  "version": "22.0.0",
+  "components": {
+    "datalake": { "status": "healthy" },
+    "hot_cache": { "status": "disabled" },
+    "synapse": { "status": "disabled" }
+  }
 }
 ```
 
-### Database Connectivity
+## Logs
 
 ```bash
-# Query metrics count
-curl "https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/metrics?page_size=10"
+# Stream logs
+az containerapp logs show --name ca-cta-lm-ingest \
+  --resource-group CTA_Resource_Group --follow
 
-# Check resources
-curl "https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/resources?page=1"
-```
-
-### Direct Database Query
-
-```bash
-# Connect to PostgreSQL
-az postgres flexible-server connect \
-  --name rm-postgres \
-  --database postgres \
-  --admin-user your-admin@yourdomain.com \
-  --admin-password "$TOKEN"
-
-# Query lm_metrics
-SELECT COUNT(*) FROM lm_metrics;
-SELECT * FROM lm_metrics ORDER BY created_at DESC LIMIT 5;
+# Check for errors
+az containerapp logs show --name ca-cta-lm-ingest \
+  --resource-group CTA_Resource_Group --tail 50 | grep ERROR
 ```
 
 ## Rollback
 
-If deployment fails, rollback to previous revision:
-
 ```bash
 # List revisions
-az containerapp revision list \
-  --name ca-cta-lm-ingest \
-  --resource-group CTA_Resource_Group \
-  --output table
+az containerapp revision list --name ca-cta-lm-ingest \
+  --resource-group CTA_Resource_Group --output table
 
 # Activate previous revision
-az containerapp revision activate \
-  --name ca-cta-lm-ingest \
+az containerapp revision activate --name ca-cta-lm-ingest \
   --resource-group CTA_Resource_Group \
   --revision <previous-revision-name>
 ```
 
 ## Troubleshooting
 
-### Deployment Fails
+**Common Issues:**
 
-**Check logs:**
+1. **"pool is closed" errors** - Hot cache is enabled but token refresh breaks pool references. Solution: Set `HOT_CACHE_ENABLED=false`.
+
+2. **"Database pool not initialized"** - Old code version requires PostgreSQL. Solution: Deploy v29+ which supports Data Lake only mode.
+
+3. **High replica count** - Check scaling rules. Reduce max-replicas if needed.
+
+**Check Container Status:**
 ```bash
-az containerapp logs show \
-  --name ca-cta-lm-ingest \
+az containerapp show --name ca-cta-lm-ingest \
   --resource-group CTA_Resource_Group \
-  --follow
+  --query "properties.runningStatus"
 ```
-
-**Check revision status:**
-```bash
-az containerapp revision show \
-  --name ca-cta-lm-ingest \
-  --resource-group CTA_Resource_Group \
-  --revision <revision-name>
-```
-
-### Token Expiration
-
-Azure AD tokens expire after 90 minutes. If you see authentication errors:
-
-```bash
-# Get fresh token
-TOKEN=$(az account get-access-token \
-  --resource-type oss-rdbms \
-  --query accessToken \
-  --output tsv)
-
-# Redeploy with new token
-./scripts/deploy.sh v11
-```
-
-### Build Fails
-
-**Check ACR build logs:**
-```bash
-az acr task logs \
-  --registry acrctalmhttps001 \
-  --name <build-name>
-```
-
-**Common issues:**
-- Dockerfile syntax errors
-- Missing dependencies in requirements
-- GitHub branch doesn't exist
-- ACR permissions
-
-## Version Management
-
-**Version Naming Convention:**
-- Manual deployments: `v<number>` (e.g., v10, v11)
-- GitHub Actions auto: `v<YYYYMMDD-HHMM>-<sha>` (e.g., v20251114-2030-a1b2c3d)
-
-**Current Production Version:** v15
-
-**Versioning Strategy:**
-- Increment version for each deployment
-- Use semantic versioning for major changes
-- Tag releases in git that correspond to deployed versions
-
-## Monitoring
-
-**Container App Metrics:**
-```bash
-az containerapp show \
-  --name ca-cta-lm-ingest \
-  --resource-group CTA_Resource_Group \
-  --query "properties.configuration.ingress"
-```
-
-**Database Metrics:**
-```bash
-# Check connection count
-SELECT count(*) FROM pg_stat_activity;
-
-# Check table sizes
-SELECT
-  schemaname,
-  tablename,
-  pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) AS size
-FROM pg_tables
-WHERE schemaname = 'public'
-ORDER BY pg_total_relation_size(schemaname||'.'||tablename) DESC;
-```
-
-## Security Notes
-
-- Azure AD tokens used for database authentication (not passwords)
-- Tokens expire after 90 minutes
-- Container App uses managed identity for ACR access
-- No credentials stored in code or git
-- Production URLs and credentials excluded from git (see .gitignore)
-
-## Deployment Checklist
-
-Before deploying to production:
-
-- [ ] All tests passing locally
-- [ ] Code reviewed and approved
-- [ ] Feature branch merged to main (if production deployment)
-- [ ] Database migrations tested
-- [ ] Backup created (if schema changes)
-- [ ] Version number incremented
-- [ ] Health check endpoint working
-- [ ] Rollback plan ready
-- [ ] Team notified of deployment
 
 ---
 
-**Last Updated:** 2025-11-14
-**Maintainer:** Project Team
+**Last Updated:** 2026-01-26
+**Current Version:** v29 (Data Lake only mode)

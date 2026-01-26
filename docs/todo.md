@@ -3,47 +3,28 @@
 
 # HttpIngest TODO
 
-## Current Sprint: ML Integration Phase B
+## Current Sprint: Data Lake Only Mode (v29)
 
-### High Priority
+### Completed
 
-- [x] Implement `/api/ml/quality` endpoint (v21)
-  - Data freshness metrics
-  - Gap detection
-  - Value range validation
+- [x] Deploy v29 with Data Lake only mode (2026-01-26)
+  - Disabled PostgreSQL hot cache (cost savings)
+  - Disabled Synapse (not needed without dashboards)
+  - Removed stale env vars (POSTGRES_*, REDIS_*, etc.)
+  - Scaled replicas from 30 to 1-5 range
+  - Fixed "pool is closed" errors from token refresh bug
 
-- [x] Add table partitioning for metric_data (DEPLOYED)
-  - Partitioned by month (metric_data_2026_01, etc.)
-  - 441K rows migrated successfully
-  - Materialized views recreated
+### Architecture Change
 
-### Medium Priority
+The application now runs in **Data Lake only mode**:
+- Primary storage: Azure Data Lake Gen2 (stlmingestdatalake)
+- Hot cache: Disabled (PostgreSQL not needed)
+- Synapse: Disabled (ML queries via Data Lake if needed later)
+- Dashboards: To be handled in LogicMonitor directly
 
-- [x] Update api-documentation.md with ML endpoints (v21)
-- [x] Add integration tests for ML endpoints with real database
-  - 32 async integration tests covering inventory, training-data, profile-coverage, quality
-  - Performance tests verify sub-5s response times
-  - Fixed SQL column references in ml_service.py (md.datasource_id joins)
-- [x] Performance benchmarking with production data
-  - 488K rows across 3 partitions
-  - get_inventory: ~2.4s (1,336 metrics, 153 resources)
-  - get_training_data(limit=1000): ~1.1s
-  - get_training_data(profile filter): ~450ms
-  - get_profile_coverage: ~270ms (100% on all profiles)
-  - get_data_quality(24h): ~2.5s
-- [x] Deploy v22 with SQL fixes (DEPLOYED)
-  - Fixed 3 SQL column reference bugs in ml_service.py
-  - Verified ML endpoints working: 535K data points, 1336 metrics, 153 resources
-- [x] Deploy v23 with deadlock fix (DEPLOYED)
-  - Added FOR UPDATE SKIP LOCKED to prevent multi-replica deadlocks
-  - Ran database migrations (normalized tables were missing)
-  - Granted permissions to managed identity
-- [x] Update documentation across all projects for single source of truth
-  - HttpIngest ecosystem-integration.md: "Planned" → "Live", v14+ → v22+
-  - Precursor integration_with_httpingest.md: "Planned ML Endpoints" → "ML Endpoints (Live)"
+### Optional Future Work
 
-### Low Priority
-
+- [ ] Re-enable hot cache if real-time dashboards needed (requires fixing token refresh bug)
 - [ ] Add more LM metric names to profiles as discovered
 - [ ] Add resource filtering to training-data endpoint
 
@@ -84,13 +65,8 @@
 ## Notes
 
 - HttpIngest does NOT directly integrate with quantum_mcp
-- Precursor is the primary consumer of ML endpoints
-- Profiles support both LM metric names and Precursor standard names
-- Current production version: v23 (deployed to Azure Container Apps)
-- Current profile coverage (v22 with partitioned data):
-  - collector: 100% (38/38 features)
-  - kubernetes: 100% (58/58 features)
-  - cloud_compute: 100% (46/46 features)
-  - network: 100% (21/21 features)
-  - database: 100% (10/10 features)
-  - application: 100% (25/25 features)
+- Current production version: v29 (Data Lake only mode)
+- Mode: datalake_only (no PostgreSQL, no Synapse)
+- Data Lake account: stlmingestdatalake
+- Replicas: 1-5 (auto-scaling on HTTP concurrency)
+- ML endpoints require hot cache to be re-enabled
