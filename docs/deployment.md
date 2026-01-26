@@ -160,5 +160,5 @@ az containerapp show --name ca-cta-lm-ingest \
 
 ---
 
-**Last Updated:** 2026-01-25
-**Current Version:** v39 (Data Lake only mode, Synapse ML query layer, OpenTelemetry tracing)
+**Last Updated:** 2026-01-26
+**Current Version:** v41 (Data Lake only mode, Synapse ML query layer, OpenTelemetry tracing with APM namespace)
