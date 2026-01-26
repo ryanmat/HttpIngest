@@ -105,7 +105,8 @@ def setup_tracing(app=None) -> Optional[TracerProvider]:
     resource = Resource.create({
         SERVICE_NAME: config["service_name"],
         SERVICE_VERSION: config["service_version"],
-        "deployment.environment": os.getenv("ENVIRONMENT", "development"),
+        "service.namespace": os.getenv("OTEL_SERVICE_NAMESPACE", "precursor-platform"),
+        "deployment.environment": os.getenv("ENVIRONMENT", "production"),
     })
 
     # Create sampler
