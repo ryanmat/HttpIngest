@@ -51,6 +51,37 @@ curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api
 - Account: `stlmingestdatalake`
 - Container: Configured via DataLakeConfig
 
+## OpenTelemetry Tracing
+
+HttpIngest supports distributed tracing via OpenTelemetry with LogicMonitor APM integration.
+
+**Environment Variables:**
+```bash
+OTEL_TRACING_ENABLED=true           # Enable/disable tracing
+OTEL_SERVICE_NAME=httpingest        # Service name in traces
+OTEL_EXPORTER_TYPE=logicmonitor     # logicmonitor, otlp, or console
+LM_ACCOUNT=your-account             # LogicMonitor account name
+LM_OTEL_TOKEN=your-bearer-token     # LogicMonitor APM bearer token
+OTEL_TRACES_SAMPLER_ARG=1.0         # Sampling rate (0.0-1.0)
+```
+
+**To enable in Container App:**
+```bash
+az containerapp update --name ca-cta-lm-ingest \
+  --resource-group CTA_Resource_Group \
+  --set-env-vars \
+    OTEL_TRACING_ENABLED=true \
+    OTEL_EXPORTER_TYPE=logicmonitor \
+    LM_ACCOUNT=your-account \
+    LM_OTEL_TOKEN=your-bearer-token
+```
+
+**Auto-instrumented:**
+- FastAPI endpoints (excluding /health, /metrics)
+- asyncpg database calls
+- httpx HTTP client calls
+- Logging (adds trace context to log messages)
+
 ## Scaling
 
 Current configuration:
@@ -129,5 +160,5 @@ az containerapp show --name ca-cta-lm-ingest \
 
 ---
 
-**Last Updated:** 2026-01-26
-**Current Version:** v32 (Data Lake only mode, Synapse ML query layer)
+**Last Updated:** 2026-01-25
+**Current Version:** v39 (Data Lake only mode, Synapse ML query layer, OpenTelemetry tracing)
