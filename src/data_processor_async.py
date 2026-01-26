@@ -99,27 +99,68 @@ class AsyncDataProcessor:
         Only returns records that have never been processed (no processing_status entry).
         Failed records are not immediately retried - they need separate retry logic.
 
+        Strategy: Query newest records first (highest IDs) since the backlog consists
+        primarily of newer records that arrived while processing was catching up.
+        This avoids scanning through millions of already-processed older records.
+
         Args:
             limit: Maximum number of records to fetch (None for all)
 
         Returns:
             List of (id, payload) tuples
         """
-        # Use RANDOM() ordering so multiple replicas work on different records
-        # This prevents all replicas from trying to lock the same records
-        query = """
-            SELECT lm.id, lm.payload
-            FROM lm_metrics lm
-            LEFT JOIN processing_status ps ON lm.id = ps.lm_metrics_id
-            WHERE ps.id IS NULL
-            ORDER BY RANDOM()
-        """
-
-        if limit:
-            query += f" LIMIT {limit}"
+        effective_limit = limit or 500
 
         async with self.db_pool.acquire() as conn:
+            # Get the max processed ID to narrow our search window
+            # Most unprocessed records are newer than the max processed
+            max_processed = await conn.fetchval("""
+                SELECT COALESCE(MAX(lm_metrics_id), 0) FROM processing_status
+            """)
+
+            # First, try to get records newer than max_processed (fast path)
+            # These are definitely unprocessed since they're newer than anything we've touched
+            query = f"""
+                SELECT id, payload
+                FROM lm_metrics
+                WHERE id > {max_processed}
+                ORDER BY id DESC
+                LIMIT {effective_limit}
+            """
+
             rows = await conn.fetch(query)
+
+            # If we didn't get enough (or any), fall back to checking older records
+            # but use a bounded window to avoid full table scans
+            if len(rows) < effective_limit:
+                remaining = effective_limit - len(rows)
+                existing_ids = {row['id'] for row in rows}
+
+                # Check a window of recent records that might have gaps
+                # Use NOT EXISTS but bounded by ID range for efficiency
+                window_size = 50000  # Check last 50K records before max_processed
+                min_check_id = max(0, max_processed - window_size)
+
+                fallback_query = f"""
+                    SELECT lm.id, lm.payload
+                    FROM lm_metrics lm
+                    WHERE lm.id > {min_check_id}
+                      AND lm.id <= {max_processed}
+                      AND NOT EXISTS (
+                        SELECT 1 FROM processing_status ps
+                        WHERE ps.lm_metrics_id = lm.id
+                      )
+                    ORDER BY lm.id DESC
+                    LIMIT {remaining}
+                """
+                more_rows = await conn.fetch(fallback_query)
+                # Combine results, avoiding duplicates
+                for row in more_rows:
+                    if row['id'] not in existing_ids:
+                        rows = list(rows) + [row]
+                        if len(rows) >= effective_limit:
+                            break
+
             # Parse JSON string to dict if needed
             result = []
             for row in rows:

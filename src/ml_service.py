@@ -9,13 +9,27 @@ This module provides endpoints for:
 - Training data extraction with profile-based filtering
 - Profile coverage analysis
 - Feature profile definitions (mirrors Precursor's config/features.yaml)
+
+Data Sources:
+- PostgreSQL hot cache: Recent data (last 48h) for real-time queries
+- Synapse/Data Lake: Historical data for ML training (queries Parquet files)
 """
 
+import logging
 import math
+import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from dataclasses import dataclass
 import asyncpg
+
+if TYPE_CHECKING:
+    from src.synapse_client import SynapseClient
+
+logger = logging.getLogger(__name__)
+
+# Hot cache retention period (queries within this window use PostgreSQL)
+HOT_CACHE_HOURS = int(os.getenv("HOT_CACHE_RETENTION_HOURS", "48"))
 
 
 # Feature profiles matching Precursor's config/features.yaml (single source of truth).
@@ -317,18 +331,88 @@ class InventoryResponse:
 
 
 class MLDataService:
-    """Service for ML data operations."""
+    """
+    Service for ML data operations.
 
-    def __init__(self, pool: asyncpg.Pool):
-        """Initialize with database pool."""
+    Supports hybrid query routing:
+    - Recent data (within HOT_CACHE_HOURS): Query PostgreSQL hot cache
+    - Historical data: Query Synapse Serverless (Data Lake Parquet files)
+    """
+
+    def __init__(
+        self,
+        pool: Optional[asyncpg.Pool] = None,
+        synapse_client: Optional["SynapseClient"] = None,
+    ):
+        """
+        Initialize with data sources.
+
+        Args:
+            pool: PostgreSQL connection pool for hot cache queries
+            synapse_client: Synapse client for historical Data Lake queries
+        """
         self.pool = pool
+        self.synapse_client = synapse_client
+
+    def _get_hot_cache_cutoff(self) -> datetime:
+        """Get the cutoff time for hot cache queries."""
+        return datetime.now(timezone.utc) - timedelta(hours=HOT_CACHE_HOURS)
+
+    def _should_use_synapse(self, start_time: Optional[datetime]) -> bool:
+        """
+        Determine if query should use Synapse (historical data).
+
+        Returns True if:
+        - Synapse client is available AND
+        - Start time is before the hot cache cutoff
+        """
+        if not self.synapse_client:
+            return False
+        if start_time is None:
+            return False
+        return start_time < self._get_hot_cache_cutoff()
 
     async def get_inventory(
         self,
         datasource: Optional[str] = None,
         resource_type: Optional[str] = None,
     ) -> InventoryResponse:
-        """Get inventory of available metrics, resources, and time ranges."""
+        """
+        Get inventory of available metrics, resources, and time ranges.
+
+        Combines data from both hot cache (PostgreSQL) and Data Lake (Synapse)
+        if both are available.
+        """
+        # If no hot cache, try Synapse only
+        if not self.pool:
+            if self.synapse_client:
+                try:
+                    synapse_inv = await self.synapse_client.get_inventory()
+                    return InventoryResponse(
+                        metrics=synapse_inv.get("metrics", []),
+                        resources=synapse_inv.get("resources", []),
+                        datasources=[],  # Synapse doesn't track datasources separately
+                        time_range=synapse_inv.get("time_range", {}),
+                        total_data_points=synapse_inv.get("total_data_points", 0),
+                    )
+                except Exception as e:
+                    logger.error(f"Synapse inventory error: {e}")
+                    return InventoryResponse(
+                        metrics=[],
+                        resources=[],
+                        datasources=[],
+                        time_range={"start": None, "end": None},
+                        total_data_points=0,
+                    )
+            else:
+                return InventoryResponse(
+                    metrics=[],
+                    resources=[],
+                    datasources=[],
+                    time_range={"start": None, "end": None},
+                    total_data_points=0,
+                )
+
         async with self.pool.acquire() as conn:
             # Get metrics with counts
             metrics_query = """
@@ -404,12 +488,55 @@ class MLDataService:
         limit: int = 10000,
         offset: int = 0,
     ) -> Dict[str, Any]:
-        """Get training data in Precursor-compatible format."""
+        """
+        Get training data in Precursor-compatible format.
+
+        Automatically routes to the appropriate data source:
+        - PostgreSQL hot cache: If start_time is within HOT_CACHE_HOURS
+        - Synapse Data Lake: If start_time is older (historical data)
+        """
         if start_time is None:
             start_time = datetime.now(timezone.utc) - timedelta(days=7)
         if end_time is None:
             end_time = datetime.now(timezone.utc)
 
+        # Get metric names for profile filtering
+        metric_names = None
+        if profile and profile in FEATURE_PROFILES:
+            profile_def = FEATURE_PROFILES[profile]
+            metric_names = (
+                profile_def["numerical_features"] +
+                profile_def["categorical_features"]
+            )
+
+        # Route to Synapse for historical queries
+        if self._should_use_synapse(start_time):
+            logger.info(f"Routing training data query to Synapse (start_time={start_time})")
+            return await self._get_training_data_from_synapse(
+                start_time=start_time,
+                end_time=end_time,
+                metric_names=metric_names,
+                profile=profile,
+                limit=limit,
+                offset=offset,
+            )
+
+        # Route to PostgreSQL hot cache for recent queries
+        if not self.pool:
+            return {
+                "data": [],
+                "meta": {
+                    "total": 0,
+                    "limit": limit,
+                    "offset": offset,
+                    "start_time": start_time.isoformat(),
+                    "end_time": end_time.isoformat(),
+                    "profile": profile,
+                    "error": "No data source available (hot cache disabled, Synapse not configured)",
+                },
+            }
+
+        logger.info(f"Routing training data query to PostgreSQL hot cache (start_time={start_time})")
         async with self.pool.acquire() as conn:
             # Build query
             query = """
@@ -487,6 +614,65 @@ class MLDataService:
                     "start_time": start_time.isoformat(),
                     "end_time": end_time.isoformat(),
                     "profile": profile,
+                    "source": "postgresql_hot_cache",
+                },
+            }
+
+    async def _get_training_data_from_synapse(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        metric_names: Optional[List[str]] = None,
+        profile: Optional[str] = None,
+        limit: int = 10000,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Get training data from Synapse (Data Lake Parquet files).
+
+        Used for historical queries beyond the hot cache window.
+        """
+        if not self.synapse_client:
+            return {
+                "data": [],
+                "meta": {
+                    "total": 0,
+                    "limit": limit,
+                    "offset": offset,
+                    "start_time": start_time.isoformat(),
+                    "end_time": end_time.isoformat(),
+                    "profile": profile,
+                    "error": "Synapse client not configured",
+                },
+            }
+
+        try:
+            result = await self.synapse_client.get_training_data(
+                start_time=start_time,
+                end_time=end_time,
+                metric_names=metric_names,
+                limit=limit,
+                offset=offset,
+            )
+
+            # Add profile to metadata
+            result["meta"]["profile"] = profile
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Synapse query error: {e}", exc_info=True)
+            return {
+                "data": [],
+                "meta": {
+                    "total": 0,
+                    "limit": limit,
+                    "offset": offset,
+                    "start_time": start_time.isoformat(),
+                    "end_time": end_time.isoformat(),
+                    "profile": profile,
+                    "source": "synapse_datalake",
+                    "error": str(e),
                 },
             }
 
@@ -495,6 +681,12 @@ class MLDataService:
         profile: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Check coverage of available metrics against feature profiles."""
+        if not self.pool:
+            return {
+                "profiles": [],
+                "error": "Hot cache not available - profile coverage requires PostgreSQL",
+            }
+
         async with self.pool.acquire() as conn:
             # Get all unique metric names in the database
             available_metrics = await conn.fetch(
@@ -546,7 +738,20 @@ class MLDataService:
         - gaps: Detected gaps in time series data
         - ranges: Value range statistics and anomalies
         - summary: Overall quality score
+
+        Note: This endpoint requires PostgreSQL hot cache for real-time quality checks.
         """
+        if not self.pool:
+            return {
+                "summary": {
+                    "overall_score": 0,
+                    "error": "Hot cache not available - data quality checks require PostgreSQL",
+                },
+                "freshness": [],
+                "gaps": [],
+                "ranges": [],
+            }
+
         async with self.pool.acquire() as conn:
             now = datetime.now(timezone.utc)
             lookback = now - timedelta(hours=hours)

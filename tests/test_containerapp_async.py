@@ -23,7 +23,7 @@ async def async_client():
 
 @pytest.mark.asyncio
 async def test_health_check_async():
-    """Test that health check uses async database operations."""
+    """Test that health check returns component status."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         response = await client.get("/api/health")
@@ -34,7 +34,11 @@ async def test_health_check_async():
         assert "status" in data
         assert "timestamp" in data
         assert "components" in data
-        assert "database" in data["components"]
+        # New architecture: datalake, hot_cache, synapse, ingestion_router, background_tasks
+        assert "datalake" in data["components"]
+        assert "hot_cache" in data["components"]
+        assert "ingestion_router" in data["components"]
+        assert "background_tasks" in data["components"]
 
 
 @pytest.mark.asyncio

@@ -39,6 +39,21 @@ from src.otlp_parser import parse_otlp
 from src.data_processor_async import AsyncDataProcessor
 from src.ml_service import MLDataService, FEATURE_PROFILES
 
+# Import new Data Lake components
+from src.datalake_writer import DataLakeWriter, DataLakeConfig
+from src.hot_cache_manager import HotCacheManager
+from src.ingestion_router import IngestionRouter, IngestionConfig
+
+# Synapse client is optional (requires pyodbc which needs ODBC drivers)
+try:
+    from src.synapse_client import SynapseClient, SynapseConfig
+    SYNAPSE_AVAILABLE = True
+except ImportError:
+    # pyodbc not available locally (missing ODBC drivers) - will work in Azure
+    SynapseClient = None  # type: ignore
+    SynapseConfig = None  # type: ignore
+    SYNAPSE_AVAILABLE = False
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -51,8 +66,16 @@ logger = logging.getLogger(__name__)
 
 # Global state
 db_pool: Optional[asyncpg.Pool] = None
+datalake_writer: Optional[DataLakeWriter] = None
+hot_cache_manager: Optional[HotCacheManager] = None
+ingestion_router: Optional[IngestionRouter] = None
+synapse_client: Optional[SynapseClient] = None
 background_tasks: Dict[str, asyncio.Task] = {}
 shutdown_event = asyncio.Event()
+
+# Feature flags
+HOT_CACHE_ENABLED = os.getenv("HOT_CACHE_ENABLED", "false").lower() == "true"
+SYNAPSE_ENABLED = os.getenv("SYNAPSE_ENABLED", "true").lower() == "true"
 
 # Database configuration constants
 MANAGED_IDENTITY_USER = "ca-cta-lm-ingest"
@@ -104,39 +127,90 @@ async def lifespan(app: FastAPI):
     Handles startup and shutdown of services.
     """
     logger.info("Starting LogicMonitor Data Pipeline...")
+    logger.info(f"Configuration: HOT_CACHE_ENABLED={HOT_CACHE_ENABLED}, SYNAPSE_ENABLED={SYNAPSE_ENABLED}")
 
-    global db_pool, background_tasks
+    global db_pool, datalake_writer, hot_cache_manager, ingestion_router, synapse_client, background_tasks
 
-    # Initialize database connection pool
-    # If using managed identity, get token first
+    # Initialize Data Lake writer (primary storage)
     try:
-        db_config = _get_db_config()
-
-        if db_config["use_managed_identity"]:
-            logger.info("Using managed identity for database authentication...")
-            credential = DefaultAzureCredential()
-            token = await credential.get_token("https://ossrdbms-aad.database.windows.net/.default")
-            os.environ["POSTGRES_PASSWORD"] = token.token
-            logger.info("Obtained initial Azure AD token for PostgreSQL")
-
-        db_params = get_db_connection_params()
-        db_pool = await asyncpg.create_pool(
-            **db_params,
-            min_size=5,
-            max_size=20,
-            command_timeout=60
-        )
-        logger.info("Database connection pool initialized (5-20 connections)")
+        datalake_config = DataLakeConfig.from_env()
+        datalake_writer = DataLakeWriter(datalake_config)
+        logger.info(f"Data Lake writer initialized (account: {datalake_config.account_name})")
     except Exception as e:
-        logger.error(f"Failed to initialize database pool: {e}")
-        db_pool = None
+        logger.error(f"Failed to initialize Data Lake writer: {e}")
+        datalake_writer = None
+
+    # Initialize Synapse client (for ML historical queries)
+    if SYNAPSE_ENABLED and SYNAPSE_AVAILABLE:
+        try:
+            synapse_config = SynapseConfig.from_env()
+            synapse_client = SynapseClient(synapse_config)
+            logger.info(f"Synapse client initialized (server: {synapse_config.server})")
+        except Exception as e:
+            logger.error(f"Failed to initialize Synapse client: {e}")
+            synapse_client = None
+    elif SYNAPSE_ENABLED and not SYNAPSE_AVAILABLE:
+        logger.warning("Synapse enabled but pyodbc not available - install ODBC drivers")
+    else:
+        logger.info("Synapse disabled - ML queries limited to hot cache")
+
+    # Initialize PostgreSQL hot cache (optional - for dashboards)
+    if HOT_CACHE_ENABLED:
+        try:
+            db_config = _get_db_config()
+
+            if db_config["use_managed_identity"]:
+                logger.info("Using managed identity for database authentication...")
+                credential = DefaultAzureCredential()
+                token = await credential.get_token("https://ossrdbms-aad.database.windows.net/.default")
+                os.environ["POSTGRES_PASSWORD"] = token.token
+                logger.info("Obtained initial Azure AD token for PostgreSQL")
+
+            db_params = get_db_connection_params()
+            db_pool = await asyncpg.create_pool(
+                **db_params,
+                min_size=5,
+                max_size=20,
+                command_timeout=60
+            )
+            logger.info("Database connection pool initialized (5-20 connections)")
+
+            # Initialize hot cache manager
+            hot_cache_manager = HotCacheManager(db_pool)
+            logger.info("Hot cache manager initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize database pool: {e}")
+            db_pool = None
+            hot_cache_manager = None
+    else:
+        logger.info("Hot cache disabled - Data Lake only mode")
+
+    # Initialize ingestion router with appropriate config
+    ingestion_config = IngestionConfig(
+        write_to_datalake=datalake_writer is not None,
+        write_to_hot_cache=HOT_CACHE_ENABLED and db_pool is not None,
+    )
+    ingestion_router = IngestionRouter(
+        datalake_writer=datalake_writer,
+        db_pool=db_pool,
+        config=ingestion_config,
+    )
+    logger.info(f"Ingestion router initialized (datalake={ingestion_config.write_to_datalake}, hot_cache={ingestion_config.write_to_hot_cache})")
 
     # Start background tasks
     try:
-        background_tasks["data_processing"] = asyncio.create_task(data_processing_loop())
-        background_tasks["health_monitoring"] = asyncio.create_task(health_monitoring_loop())
-        background_tasks["token_refresh"] = asyncio.create_task(token_refresh_loop())
-        logger.info("Background tasks started (data processing, health monitoring, token refresh)")
+        # Data Lake flush task (always run if datalake enabled)
+        if datalake_writer:
+            background_tasks["datalake_flush"] = asyncio.create_task(datalake_flush_loop())
+
+        # Hot cache tasks (only if enabled)
+        if HOT_CACHE_ENABLED and db_pool:
+            background_tasks["data_processing"] = asyncio.create_task(data_processing_loop())
+            background_tasks["health_monitoring"] = asyncio.create_task(health_monitoring_loop())
+            background_tasks["token_refresh"] = asyncio.create_task(token_refresh_loop())
+            background_tasks["hot_cache_cleanup"] = asyncio.create_task(hot_cache_cleanup_loop())
+
+        logger.info(f"Background tasks started: {list(background_tasks.keys())}")
     except Exception as e:
         logger.error(f"Failed to start background tasks: {e}")
 
@@ -145,6 +219,14 @@ async def lifespan(app: FastAPI):
     # Cleanup on shutdown
     logger.info("Shutting down LogicMonitor Data Pipeline...")
     shutdown_event.set()
+
+    # Flush Data Lake buffer before shutdown
+    if datalake_writer:
+        try:
+            written = await datalake_writer.flush()
+            logger.info(f"Final Data Lake flush: {written} records written")
+        except Exception as e:
+            logger.error(f"Error during final Data Lake flush: {e}")
 
     # Cancel background tasks
     for task_name, task in background_tasks.items():
@@ -158,6 +240,11 @@ async def lifespan(app: FastAPI):
     if db_pool:
         await db_pool.close()
         logger.info("Database pool closed")
+
+    # Close Synapse connection
+    if synapse_client:
+        synapse_client.close()
+        logger.info("Synapse connection closed")
 
     logger.info("Shutdown complete")
 
@@ -174,8 +261,51 @@ app = FastAPI(
 # BACKGROUND TASKS
 # ============================================================================
 
+async def datalake_flush_loop():
+    """Background task to periodically flush Data Lake buffer."""
+    logger.info("Starting Data Lake flush loop...")
+
+    flush_interval = int(os.getenv("DATALAKE_FLUSH_INTERVAL_SECONDS", "60"))
+
+    while not shutdown_event.is_set():
+        try:
+            await asyncio.sleep(flush_interval)
+
+            if datalake_writer:
+                stats = datalake_writer.get_buffer_stats()
+                if stats["metric_data_buffered"] > 0:
+                    written = await datalake_writer.flush()
+                    logger.info(f"Data Lake flush: {written} records written")
+
+        except Exception as e:
+            logger.error(f"Data Lake flush error: {e}", exc_info=True)
+            await asyncio.sleep(10)
+
+
+async def hot_cache_cleanup_loop():
+    """Background task to clean up expired data from hot cache."""
+    logger.info("Starting hot cache cleanup loop...")
+
+    # Run cleanup every hour
+    cleanup_interval = 3600
+
+    while not shutdown_event.is_set():
+        try:
+            await asyncio.sleep(cleanup_interval)
+
+            if hot_cache_manager:
+                deleted = await hot_cache_manager.cleanup_expired_data()
+                total_deleted = sum(deleted.values())
+                if total_deleted > 0:
+                    logger.info(f"Hot cache cleanup: {total_deleted} expired records deleted")
+
+        except Exception as e:
+            logger.error(f"Hot cache cleanup error: {e}", exc_info=True)
+            await asyncio.sleep(60)
+
+
 async def data_processing_loop():
-    """Background task to process raw OTLP data."""
+    """Background task to process raw OTLP data (legacy - for hot cache backfill)."""
     logger.info("Starting data processing loop...")
 
     while not shutdown_event.is_set():
@@ -286,26 +416,85 @@ async def health_check():
     health_status = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "version": "14.0.0",
+        "version": "22.0.0",
+        "mode": "datalake_only" if not HOT_CACHE_ENABLED else "datalake_with_hot_cache",
         "components": {}
     }
 
-    # Check database pool
-    try:
-        if db_pool:
-            async with db_pool.acquire() as conn:
-                await conn.fetchval("SELECT 1")
-            health_status["components"]["database"] = "healthy"
-        else:
-            health_status["components"]["database"] = "pool not initialized"
-            health_status["status"] = "degraded"
-    except Exception as e:
-        health_status["components"]["database"] = f"unhealthy: {str(e)}"
+    # Check Data Lake writer (primary storage)
+    if datalake_writer:
+        health_status["components"]["datalake"] = {
+            "status": "healthy",
+            "buffer": datalake_writer.get_buffer_stats()
+        }
+    else:
+        health_status["components"]["datalake"] = "not initialized"
         health_status["status"] = "degraded"
+
+    # Check hot cache (optional - for dashboards)
+    if HOT_CACHE_ENABLED:
+        try:
+            if db_pool and hot_cache_manager:
+                is_healthy = await hot_cache_manager.is_healthy()
+                health_status["components"]["hot_cache"] = {
+                    "status": "healthy" if is_healthy else "degraded",
+                    "enabled": True
+                }
+            else:
+                health_status["components"]["hot_cache"] = {
+                    "status": "not initialized",
+                    "enabled": True
+                }
+                health_status["status"] = "degraded"
+        except Exception as e:
+            health_status["components"]["hot_cache"] = {
+                "status": f"unhealthy: {str(e)}",
+                "enabled": True
+            }
+            health_status["status"] = "degraded"
+    else:
+        health_status["components"]["hot_cache"] = {
+            "status": "disabled",
+            "enabled": False
+        }
+
+    # Check ingestion router
+    if ingestion_router:
+        router_status = await ingestion_router.get_status()
+        health_status["components"]["ingestion_router"] = router_status
+    else:
+        health_status["components"]["ingestion_router"] = "not initialized"
+        health_status["status"] = "degraded"
+
+    # Check Synapse (for ML historical queries)
+    if SYNAPSE_ENABLED:
+        if synapse_client:
+            try:
+                synapse_health = await synapse_client.check_health()
+                health_status["components"]["synapse"] = synapse_health
+            except Exception as e:
+                health_status["components"]["synapse"] = {
+                    "status": f"unhealthy: {str(e)}",
+                    "enabled": True
+                }
+        else:
+            health_status["components"]["synapse"] = {
+                "status": "not initialized",
+                "enabled": True
+            }
+    else:
+        health_status["components"]["synapse"] = {
+            "status": "disabled",
+            "enabled": False
+        }
 
     # Check background tasks
     running_tasks = sum(1 for t in background_tasks.values() if not t.done())
-    health_status["components"]["background_tasks"] = f"{running_tasks}/{len(background_tasks)} running"
+    health_status["components"]["background_tasks"] = {
+        "running": running_tasks,
+        "total": len(background_tasks),
+        "tasks": list(background_tasks.keys())
+    }
 
     status_code = 200 if health_status["status"] == "healthy" else 503
 
@@ -317,8 +506,11 @@ async def http_ingest(request: Request):
     """
     LogicMonitor OTLP ingestion endpoint.
 
-    Accepts OTLP JSON payloads and stores them for processing.
-    Uses async database operations with connection pooling for optimal performance.
+    Accepts OTLP JSON payloads and routes to Data Lake (primary) and
+    optionally PostgreSQL hot cache (for dashboards).
+
+    Data Lake: All data stored as Parquet for ML training and historical queries.
+    Hot Cache: Last 48 hours for real-time Prometheus/Grafana dashboards.
     """
     try:
         # Get content type and body
@@ -345,32 +537,32 @@ async def http_ingest(request: Request):
                 status_code=400
             )
 
-        # Check if database pool is available
-        if not db_pool:
-            logger.error("Database pool not initialized")
+        # Check if ingestion router is available
+        if not ingestion_router:
+            logger.error("Ingestion router not initialized")
             return JSONResponse(
-                content={"error": "Database not available"},
+                content={"error": "Ingestion service not available"},
                 status_code=503
             )
 
-        # Store raw payload using async connection pool
-        async with db_pool.acquire() as conn:
-            metric_id = await conn.fetchval(
-                """
-                INSERT INTO lm_metrics (payload, ingested_at)
-                VALUES ($1, $2)
-                RETURNING id
-                """,
-                json.dumps(payload),
-                datetime.now()
-            )
+        # Route to Data Lake and optionally hot cache
+        stats = await ingestion_router.ingest(payload)
 
-        logger.info(f"Ingested metric {metric_id}")
+        # Check for errors
+        if stats.errors and stats.datalake_written == 0 and stats.hot_cache_written == 0:
+            return JSONResponse(
+                content={
+                    "status": "error",
+                    "errors": stats.errors,
+                    "timestamp": datetime.now().isoformat()
+                },
+                status_code=500
+            )
 
         return JSONResponse(
             content={
                 "status": "success",
-                "id": metric_id,
+                "stats": stats.to_dict(),
                 "timestamp": datetime.now().isoformat()
             },
             status_code=200
@@ -515,10 +707,10 @@ async def ml_inventory(
     - Time range of available data
     """
     try:
-        if not db_pool:
-            return JSONResponse(content={"error": "Database not available"}, status_code=503)
+        if not db_pool and not synapse_client:
+            return JSONResponse(content={"error": "No data source available"}, status_code=503)
 
-        service = MLDataService(db_pool)
+        service = MLDataService(pool=db_pool, synapse_client=synapse_client)
         inventory = await service.get_inventory(datasource=datasource, resource_type=resource_type)
 
         return JSONResponse(content={
@@ -559,8 +751,8 @@ async def ml_training_data(
     - application: APM metrics
     """
     try:
-        if not db_pool:
-            return JSONResponse(content={"error": "Database not available"}, status_code=503)
+        if not db_pool and not synapse_client:
+            return JSONResponse(content={"error": "No data source available"}, status_code=503)
 
         # Validate profile if provided
         if profile and profile not in FEATURE_PROFILES:
@@ -572,7 +764,7 @@ async def ml_training_data(
                 status_code=400,
             )
 
-        service = MLDataService(db_pool)
+        service = MLDataService(pool=db_pool, synapse_client=synapse_client)
         result = await service.get_training_data(
             start_time=datetime.fromisoformat(start_time) if start_time else None,
             end_time=datetime.fromisoformat(end_time) if end_time else None,
@@ -604,7 +796,10 @@ async def ml_profile_coverage(
     """
     try:
         if not db_pool:
-            return JSONResponse(content={"error": "Database not available"}, status_code=503)
+            return JSONResponse(
+                content={"error": "Profile coverage requires hot cache (PostgreSQL)"},
+                status_code=503,
+            )
 
         # Validate profile if provided
         if profile and profile not in FEATURE_PROFILES:
@@ -616,7 +811,7 @@ async def ml_profile_coverage(
                 status_code=400,
             )
 
-        service = MLDataService(db_pool)
+        service = MLDataService(pool=db_pool, synapse_client=synapse_client)
         result = await service.get_profile_coverage(profile=profile)
 
         return JSONResponse(content=result)
@@ -661,12 +856,12 @@ async def ml_quality(
     """
     if db_pool is None:
         return JSONResponse(
-            content={"error": "Database not available"},
+            content={"error": "Data quality checks require hot cache (PostgreSQL)"},
             status_code=503,
         )
 
     try:
-        service = MLDataService(db_pool)
+        service = MLDataService(pool=db_pool, synapse_client=synapse_client)
         result = await service.get_data_quality(profile=profile, hours=hours)
 
         return JSONResponse(content=result)

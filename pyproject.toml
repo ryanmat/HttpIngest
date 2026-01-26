@@ -8,7 +8,10 @@ dependencies = [
     "alembic>=1.17.1",
     "asyncpg>=0.29.0",
     "azure-identity>=1.19.0",
+    "azure-storage-file-datalake>=12.14.0",
     "psycopg2-binary>=2.9.11",
+    "pyarrow>=14.0.0",
+    "pyodbc>=5.0.0",
     "fastapi>=0.121.2",
     "uvicorn[standard]>=0.32.0",
 ]
