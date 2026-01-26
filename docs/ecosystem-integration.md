@@ -24,6 +24,22 @@ This document describes how HttpIngest integrates with the broader LogicMonitor 
 |                        Query Engine: Azure Synapse Serverless SQL        |
 +-------------------------------------------------------------------------+
                                     |
+            +-----------------------+-----------------------+
+            |                                               |
+            v                                               v
++---------------------------+               +---------------------------+
+|     OBSERVABILITY         |               |         ML LAYER          |
+|                           |               |                           |
+| lmotel (AKS)              |               |   Precursor               |
+|   - OTLP receiver         |               |   - X-DEC Model           |
+|   - LogicMonitor APM      |               |   - Feature Engineering   |
+|                           |               |   - Prediction API        |
+| Namespace: precursor-     |               |                           |
+|   platform                |               +---------------------------+
+| Services: httpingest,     |
+|   precursor               |
++---------------------------+
+                                    |
                                     v
 +-------------------------------------------------------------------------+
 |                          ML LAYER                                        |

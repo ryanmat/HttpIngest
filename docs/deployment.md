@@ -16,7 +16,7 @@ HttpIngest runs in **Data Lake only mode** - all OTLP metrics are written to Azu
 - **Container App:** `ca-cta-lm-ingest`
 - **Resource Group:** `CTA_Resource_Group`
 - **Data Lake:** `stlmingestdatalake` (Azure Data Lake Gen2)
-- **Current Version:** v29
+- **Current Version:** v48
 
 **Endpoints:**
 - Health: `https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health`
@@ -55,32 +55,73 @@ curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api
 
 HttpIngest supports distributed tracing via OpenTelemetry with LogicMonitor APM integration.
 
-**Environment Variables:**
-```bash
-OTEL_TRACING_ENABLED=true           # Enable/disable tracing
-OTEL_SERVICE_NAME=httpingest        # Service name in traces
-OTEL_EXPORTER_TYPE=logicmonitor     # logicmonitor, otlp, or console
-LM_ACCOUNT=your-account             # LogicMonitor account name
-LM_OTEL_TOKEN=your-bearer-token     # LogicMonitor APM bearer token
-OTEL_TRACES_SAMPLER_ARG=1.0         # Sampling rate (0.0-1.0)
+### Architecture
+
+Traces flow through the lmotel collector deployed in AKS:
+
+```
+HttpIngest (Azure Container App)
+    |
+    v OTLP/HTTP (port 4318)
+lmotel LoadBalancer (20.242.145.102)
+    |
+    v
+LogicMonitor APM (lmryanmatuszewski.logicmonitor.com)
 ```
 
-**To enable in Container App:**
+### Environment Variables
+
+```bash
+OTEL_TRACING_ENABLED=true                              # Enable/disable tracing
+OTEL_SERVICE_NAME=httpingest                           # Service name in traces
+OTEL_EXPORTER_TYPE=otlp                                # otlp, logicmonitor, or console
+OTEL_EXPORTER_OTLP_ENDPOINT=http://20.242.145.102:4318/v1/traces  # lmotel endpoint
+OTEL_SERVICE_NAMESPACE=precursor-platform              # Groups services in APM topology
+OTEL_TRACES_SAMPLER_ARG=1.0                            # Sampling rate (0.0-1.0)
+```
+
+### Current Production Configuration
+
 ```bash
 az containerapp update --name ca-cta-lm-ingest \
   --resource-group CTA_Resource_Group \
   --set-env-vars \
     OTEL_TRACING_ENABLED=true \
-    OTEL_EXPORTER_TYPE=logicmonitor \
-    LM_ACCOUNT=your-account \
-    LM_OTEL_TOKEN=your-bearer-token
+    OTEL_EXPORTER_TYPE=otlp \
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://20.242.145.102:4318/v1/traces \
+    OTEL_SERVICE_NAME=httpingest \
+    OTEL_SERVICE_NAMESPACE=precursor-platform
 ```
 
-**Auto-instrumented:**
+### Auto-Instrumented Libraries
+
 - FastAPI endpoints (excluding /health, /metrics)
 - asyncpg database calls
 - httpx HTTP client calls
 - Logging (adds trace context to log messages)
+
+### Initialization Order
+
+Tracing must be initialized immediately after the FastAPI app is created but before
+routes are registered. This ensures the ASGI middleware is properly injected.
+
+```python
+app = FastAPI(...)
+setup_tracing(app)  # Must be called here
+```
+
+### Verifying Traces
+
+Check export logs:
+```bash
+az containerapp logs show --name ca-cta-lm-ingest \
+  --resource-group CTA_Resource_Group --type console | grep "Exported"
+```
+
+Expected output:
+```
+[otlp] Exported 3 spans successfully (total: N/N)
+```
 
 ## Scaling
 
@@ -161,4 +202,4 @@ az containerapp show --name ca-cta-lm-ingest \
 ---
 
 **Last Updated:** 2026-01-26
-**Current Version:** v41 (Data Lake only mode, Synapse ML query layer, OpenTelemetry tracing with APM namespace)
+**Current Version:** v48 (Data Lake only mode, Synapse ML query layer, OpenTelemetry tracing via lmotel)
