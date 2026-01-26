@@ -97,7 +97,7 @@ class LoggingSpanExporter(SpanExporter):
         return self._wrapped.force_flush(timeout_millis)
 
 # Version should match pyproject.toml
-SERVICE_VERSION_VALUE = "39.0.0"
+SERVICE_VERSION_VALUE = "48.0.0"
 
 
 def get_tracing_config() -> dict:
@@ -202,6 +202,13 @@ def setup_tracing(app=None) -> Optional[TracerProvider]:
         provider.add_span_processor(processor)
         logger.info(f"Added {exporter_type} span processor")
 
+    # Debug: Also add console exporter to verify spans are being created
+    if os.getenv("OTEL_DEBUG_CONSOLE", "false").lower() == "true":
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        console_processor = SimpleSpanProcessor(ConsoleSpanExporter())
+        provider.add_span_processor(console_processor)
+        logger.info("Added debug console span processor")
+
     # Set as global tracer provider
     trace.set_tracer_provider(provider)
 
@@ -216,11 +223,14 @@ def _instrument_libraries(app=None):
     """Auto-instrument common libraries."""
     # FastAPI instrumentation
     if app:
-        FastAPIInstrumentor.instrument_app(
-            app,
-            excluded_urls="health,metrics",  # Don't trace health checks
-        )
-        logger.info("Instrumented FastAPI")
+        try:
+            FastAPIInstrumentor.instrument_app(
+                app,
+                excluded_urls="health,metrics",  # Don't trace health checks
+            )
+            logger.info("Instrumented FastAPI app")
+        except Exception as e:
+            logger.warning(f"FastAPI instrumentation failed: {e}")
 
     # AsyncPG (PostgreSQL) instrumentation
     try:

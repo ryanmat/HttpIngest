@@ -20,6 +20,15 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from contextlib import asynccontextmanager
 
+# Configure logging EARLY - before any module imports that use logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
 import asyncpg
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -57,14 +66,6 @@ except ImportError:
     SynapseConfig = None  # type: ignore
     SYNAPSE_AVAILABLE = False
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
 logger = logging.getLogger(__name__)
 
 # Global state
@@ -132,8 +133,8 @@ async def lifespan(app: FastAPI):
     logger.info("Starting LogicMonitor Data Pipeline...")
     logger.info(f"Configuration: HOT_CACHE_ENABLED={HOT_CACHE_ENABLED}, SYNAPSE_ENABLED={SYNAPSE_ENABLED}")
 
-    # Initialize OpenTelemetry tracing
-    setup_tracing(app)
+    # Note: OpenTelemetry tracing is initialized at module load (before app creation)
+    # to ensure FastAPI instrumentation works properly
 
     global db_pool, datalake_writer, hot_cache_manager, ingestion_router, synapse_client, background_tasks
 
@@ -264,6 +265,10 @@ app = FastAPI(
     version="39.0.0",
     lifespan=lifespan
 )
+
+# Initialize tracing IMMEDIATELY after app creation (before routes are registered)
+# This ensures FastAPI middleware is properly instrumented
+setup_tracing(app)
 
 
 # ============================================================================
