@@ -50,18 +50,22 @@ class SynapseConfig:
 
     @property
     def metric_data_path(self) -> str:
-        """Get the full ABFSS path for metric data."""
+        """Get the full ABFSS path for metric data with wildcard for partitioned files.
+
+        Uses Hive-style partition pattern: year=*/month=*/day=*/hour=*/*.parquet
+        Synapse OPENROWSET requires single wildcards at each directory level.
+        """
         return (
             f"abfss://{self.datalake_filesystem}@{self.datalake_account}.dfs.core.windows.net/"
-            f"{self.datalake_base_path}/metric_data/"
+            f"{self.datalake_base_path}/metric_data/year=*/month=*/day=*/hour=*/*.parquet"
         )
 
     @property
     def resources_path(self) -> str:
-        """Get the full ABFSS path for resources."""
+        """Get the full ABFSS path for resources with wildcard for Parquet files."""
         return (
             f"abfss://{self.datalake_filesystem}@{self.datalake_account}.dfs.core.windows.net/"
-            f"{self.datalake_base_path}/resources/"
+            f"{self.datalake_base_path}/resources/*.parquet"
         )
 
 
@@ -80,17 +84,48 @@ class SynapseClient:
     def _get_connection(self) -> pyodbc.Connection:
         """Get or create a Synapse connection using Azure AD auth."""
         if self._connection is None or self._connection.closed:
-            # Use Azure AD authentication
-            # In Azure Container Apps, this uses the managed identity
-            # Locally, it uses Azure CLI or other DefaultAzureCredential sources
-            conn_str = (
-                f"DRIVER={{ODBC Driver 18 for SQL Server}};"
-                f"SERVER={self.config.server};"
-                f"DATABASE={self.config.database};"
-                f"Authentication=ActiveDirectoryDefault;"
-                f"Encrypt=yes;"
-                f"TrustServerCertificate=no;"
-            )
+            # Determine authentication method based on environment
+            use_managed_identity = os.getenv("USE_MANAGED_IDENTITY", "false").lower() == "true"
+
+            if use_managed_identity:
+                # In Azure Container Apps, use managed identity
+                conn_str = (
+                    f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+                    f"SERVER={self.config.server};"
+                    f"DATABASE={self.config.database};"
+                    f"Authentication=ActiveDirectoryMsi;"
+                    f"Encrypt=yes;"
+                    f"TrustServerCertificate=no;"
+                )
+            else:
+                # Locally, use Azure CLI credentials via access token
+                from azure.identity import DefaultAzureCredential
+                credential = DefaultAzureCredential()
+                token = credential.get_token("https://database.windows.net/.default")
+                conn_str = (
+                    f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+                    f"SERVER={self.config.server};"
+                    f"DATABASE={self.config.database};"
+                    f"Encrypt=yes;"
+                    f"TrustServerCertificate=no;"
+                )
+                # Pass token via SQL_COPT_SS_ACCESS_TOKEN
+                # pyodbc requires token as bytes
+                import struct
+                token_bytes = token.token.encode("utf-16-le")
+                token_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+
+                try:
+                    self._connection = pyodbc.connect(
+                        conn_str,
+                        timeout=30,
+                        attrs_before={1256: token_struct}  # SQL_COPT_SS_ACCESS_TOKEN
+                    )
+                    logger.info(f"Connected to Synapse with token: {self.config.server}")
+                    return self._connection
+                except pyodbc.Error as e:
+                    logger.error(f"Failed to connect to Synapse with token: {e}")
+                    raise
 
             try:
                 self._connection = pyodbc.connect(conn_str, timeout=30)

@@ -3,16 +3,19 @@
 
 # HttpIngest TODO
 
-## Current Sprint: Data Lake Only Mode (v29)
+## Current Sprint: Data Lake Only Mode (v32)
 
 ### Completed
 
-- [x] Deploy v29 with Data Lake only mode (2026-01-26)
+- [x] Deploy v32 with Data Lake only mode (2026-01-26)
   - Disabled PostgreSQL hot cache (cost savings)
-  - Disabled Synapse (not needed without dashboards)
-  - Removed stale env vars (POSTGRES_*, REDIS_*, etc.)
   - Scaled replicas from 30 to 1-5 range
   - Fixed "pool is closed" errors from token refresh bug
+- [x] Fix Synapse Serverless SQL integration (2026-01-26)
+  - Enabled Synapse for ML query layer
+  - Fixed authentication (ActiveDirectoryMsi)
+  - Fixed firewall (AllowAllWindowsAzureIps)
+  - Fixed Parquet path wildcards (year=*/month=*/...)
 
 ### Architecture Change
 
@@ -65,8 +68,9 @@ The application now runs in **Data Lake only mode**:
 ## Notes
 
 - HttpIngest does NOT directly integrate with quantum_mcp
-- Current production version: v29 (Data Lake only mode)
-- Mode: datalake_only (no PostgreSQL, no Synapse)
+- Current production version: v32 (Data Lake only mode)
+- Mode: datalake_only (PostgreSQL disabled, Synapse enabled)
 - Data Lake account: stlmingestdatalake
+- Synapse server: syn-lm-analytics-ondemand.sql.azuresynapse.net
 - Replicas: 1-5 (auto-scaling on HTTP concurrency)
-- ML endpoints require hot cache to be re-enabled
+- ML endpoints use Synapse Serverless SQL (~$5/TB scanned)

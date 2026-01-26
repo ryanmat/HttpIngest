@@ -130,4 +130,4 @@ az containerapp show --name ca-cta-lm-ingest \
 ---
 
 **Last Updated:** 2026-01-26
-**Current Version:** v29 (Data Lake only mode)
+**Current Version:** v32 (Data Lake only mode, Synapse ML query layer)

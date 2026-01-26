@@ -1,8 +1,12 @@
+# Description: API reference for LogicMonitor OTLP Data Pipeline endpoints.
+# Description: Covers ingestion, health, ML endpoints, and data export APIs.
+
 # LogicMonitor Data Pipeline - API Documentation
 
-**Version:** 21.0
+**Version:** 32.0
 **Base URL:** `https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io`
 **Protocol:** HTTPS
+**Storage Mode:** Data Lake only (v32+)
 
 ---
 
@@ -11,8 +15,8 @@
 1. [Authentication](#authentication)
 2. [Data Ingestion](#data-ingestion)
 3. [Health & Monitoring](#health--monitoring)
-4. [Data Export](#data-export)
-5. [ML Data Service](#ml-data-service)
+4. [ML Data Service](#ml-data-service)
+5. [Data Export (Hot Cache)](#data-export-hot-cache)
 6. [Error Codes](#error-codes)
 
 ---
@@ -23,11 +27,11 @@
 
 **Status:** NOT IMPLEMENTED
 
-API key authentication is not currently implemented. Endpoints are publicly accessible.
+Endpoints are publicly accessible. Consider adding authentication for production use.
 
-### Azure AD Authentication (Database)
+### Azure Managed Identity
 
-PostgreSQL connections use Azure AD managed identity tokens that are refreshed automatically every 45 minutes.
+Data Lake and Synapse connections use Azure managed identity. No credentials are stored.
 
 ---
 
@@ -40,7 +44,7 @@ Ingest OTLP (OpenTelemetry Protocol) formatted metrics data.
 **Headers:**
 ```http
 Content-Type: application/json
-Content-Encoding: gzip (optional)
+Content-Encoding: gzip (optional, recommended for >1KB)
 ```
 
 **Request Body:**
@@ -84,14 +88,19 @@ Content-Encoding: gzip (optional)
 ```json
 {
   "status": "success",
-  "id": 12345,
-  "timestamp": "2025-01-14T12:00:00Z"
+  "message": "Data ingested successfully",
+  "buffered": {
+    "metric_data": 150,
+    "resources": 1,
+    "datasources": 5,
+    "metric_definitions": 25
+  }
 }
 ```
 
-**Gzip Compression:**
+**Example (gzip):**
 ```bash
-curl -X POST https://{host}/api/HttpIngest \
+curl -X POST https://ca-cta-lm-ingest.../api/HttpIngest \
   -H "Content-Type: application/json" \
   -H "Content-Encoding: gzip" \
   --data-binary @payload.json.gz
@@ -105,193 +114,55 @@ curl -X POST https://{host}/api/HttpIngest \
 
 Health check endpoint with component-level status.
 
-**Response:** `200 OK` (healthy) or `503 Service Unavailable` (degraded)
+**Response:** `200 OK` (healthy)
 ```json
 {
   "status": "healthy",
-  "timestamp": "2025-01-14T12:00:00Z",
-  "version": "13.1-no-streaming",
+  "timestamp": "2026-01-26T02:30:00Z",
+  "version": "32.0.0",
+  "mode": "datalake_only",
   "components": {
-    "database": "healthy",
-    "background_tasks": "3/3 running"
+    "datalake": {
+      "status": "healthy",
+      "buffer": {
+        "metric_data_buffered": 827,
+        "resources_buffered": 1,
+        "datasources_buffered": 33,
+        "metric_definitions_buffered": 332,
+        "flush_threshold": 10000
+      }
+    },
+    "hot_cache": {
+      "status": "disabled",
+      "enabled": false
+    },
+    "synapse": {
+      "status": "healthy",
+      "server": "syn-lm-analytics-ondemand.sql.azuresynapse.net",
+      "database": "master"
+    },
+    "background_tasks": {
+      "running": 1,
+      "total": 1,
+      "tasks": ["datalake_flush"]
+    }
   }
 }
 ```
 
 **Components:**
-- `database`: PostgreSQL connection pool health
-- `background_tasks`: Number of running background tasks (data processing, health monitoring, token refresh)
-
-### GET /api/metrics/summary
-
-**Status:** NOT IMPLEMENTED
-
-This endpoint does not exist in the current implementation.
-
----
-
-## Data Export
-
-### GET /metrics
-
-Export metrics in Prometheus text format.
-
-**Query Parameters:**
-None. Returns all metrics from the last hour (default configuration in code).
-
-**Example:**
-```bash
-curl "https://{host}/metrics"
-```
-
-**Response:** `200 OK` (text/plain)
-```
-# HELP cpu_usage CPU usage percentage
-# TYPE cpu_usage gauge
-cpu_usage{service="my-service",host="host-01"} 45.5 1673000000000
-
-# HELP memory_bytes Memory usage in bytes
-# TYPE memory_bytes gauge
-memory_bytes{service="my-service",host="host-01"} 8589934592 1673000000000
-```
-
-### Grafana SimpleJSON Datasource
-
-#### GET /grafana/search
-
-Search for available metrics.
-
-**Request:**
-```json
-{
-  "target": "cpu"
-}
-```
-
-**Response:** `200 OK`
-```json
-[
-  "cpu.usage",
-  "cpu.idle",
-  "cpu.system"
-]
-```
-
-#### POST /grafana/query
-
-Query time-series data.
-
-**Request:**
-```json
-{
-  "targets": [
-    {"target": "cpu.usage"}
-  ],
-  "range": {
-    "from": "2025-01-14T00:00:00Z",
-    "to": "2025-01-14T12:00:00Z"
-  },
-  "maxDataPoints": 1000
-}
-```
-
-**Response:** `200 OK`
-```json
-[
-  {
-    "target": "cpu.usage",
-    "datapoints": [
-      [45.5, 1673000000000],
-      [46.2, 1673000060000]
-    ]
-  }
-]
-```
-
-### GET /export/powerbi
-
-PowerBI-compatible JSON export.
-
-**Query Parameters:**
-- `start_time` (optional): ISO 8601 timestamp (default: 24 hours ago)
-- `end_time` (optional): ISO 8601 timestamp (default: now)
-
-**Example:**
-```bash
-curl "https://{host}/export/powerbi?start_time=2025-01-14T00:00:00&end_time=2025-01-14T12:00:00"
-```
-
-**Response:** `200 OK`
-```json
-{
-  "data": [
-    {
-      "metric_name": "cpu.usage",
-      "resource_service": "my-service",
-      "resource_host": "host-01",
-      "value": 45.5,
-      "timestamp": "2025-01-14T12:00:00Z"
-    }
-  ]
-}
-```
-
-### GET /export/csv
-
-Export metrics as CSV.
-
-**Query Parameters:**
-- `start_time` (optional): ISO 8601 timestamp (default: 24 hours ago)
-- `end_time` (optional): ISO 8601 timestamp (default: now)
-
-**Example:**
-```bash
-curl "https://{host}/export/csv?start_time=2025-01-14T00:00:00&end_time=2025-01-14T12:00:00" > metrics.csv
-```
-
-**Response:** `200 OK` (text/csv)
-```csv
-metric_name,resource_service,resource_host,value,timestamp
-cpu.usage,my-service,host-01,45.5,2025-01-14T12:00:00Z
-cpu.usage,my-service,host-01,46.2,2025-01-14T12:01:00Z
-```
-
-### GET /export/json
-
-Export metrics as JSON.
-
-**Query Parameters:**
-- `start_time` (optional): ISO 8601 timestamp (default: 24 hours ago)
-- `end_time` (optional): ISO 8601 timestamp (default: now)
-
-**Example:**
-```bash
-curl "https://{host}/export/json?start_time=2025-01-14T00:00:00&end_time=2025-01-14T12:00:00"
-```
-
-**Response:** `200 OK` (application/json)
-```json
-{
-  "metrics": [
-    {
-      "name": "cpu.usage",
-      "resource": {
-        "service": "my-service",
-        "host": "host-01"
-      },
-      "datapoints": [
-        {"value": 45.5, "timestamp": "2025-01-14T12:00:00Z"}
-      ]
-    }
-  ]
-}
-```
+- `datalake`: Data Lake writer buffer status
+- `hot_cache`: PostgreSQL hot cache status (disabled by default)
+- `synapse`: Synapse Serverless SQL connection status
+- `background_tasks`: Running background tasks
 
 ---
 
 ## ML Data Service
 
-The ML Data Service provides endpoints for serving training data to Precursor ML models. These endpoints support feature profile-based filtering for infrastructure domain-specific machine learning.
+The ML Data Service provides endpoints for serving training data to Precursor ML models. These endpoints query Azure Data Lake Gen2 via Synapse Serverless SQL.
+
+**Query Engine:** Azure Synapse Serverless SQL (~$5/TB scanned)
 
 ### GET /api/ml/profiles
 
@@ -303,63 +174,49 @@ List all available feature profiles with their numerical and categorical feature
   "profiles": {
     "collector": {
       "description": "LogicMonitor Collector self-monitoring metrics",
-      "numerical_features": ["ExecuteTime", "AvgExecTime", "MaxExecTime", "..."],
-      "categorical_features": ["Active", "santabaConnection", "persistentQueueStatus"],
+      "numerical_features": ["ExecuteTime", "AvgExecTime", "MaxExecTime"],
+      "categorical_features": ["Active", "santabaConnection"],
       "total_features": 38
     },
     "kubernetes": {
-      "description": "Container orchestration workloads (K8s, ECS, Docker Swarm)",
-      "numerical_features": ["cpuUsageNanoCores", "memoryUsageBytes", "..."],
-      "categorical_features": ["podConditionPhase", "kubePodStatusReady", "..."],
+      "description": "Container orchestration workloads",
+      "numerical_features": ["cpuUsageNanoCores", "memoryUsageBytes"],
+      "categorical_features": ["podConditionPhase"],
       "total_features": 58
-    },
-    "cloud_compute": {...},
-    "network": {...},
-    "database": {...},
-    "application": {...}
+    }
   }
 }
 ```
 
 ### GET /api/ml/inventory
 
-Get inventory of available metrics, resources, and datasources.
+Get inventory of available metrics, resources, and datasources from Data Lake.
 
 **Query Parameters:**
-- `datasource` (optional): Filter by datasource name (e.g., "WinCollectorUsage")
+- `datasource` (optional): Filter by datasource name
 
 **Response:** `200 OK`
 ```json
 {
   "metrics": [
     {
-      "name": "ExecuteTime",
-      "unit": "ms",
-      "metric_type": "gauge",
-      "datasource": "WinCollectorUsage",
+      "metric_name": "ExecuteTime",
+      "datasource_name": "WinCollectorUsage",
       "data_points": 15420
     }
   ],
   "resources": [
     {
-      "id": 1,
-      "host_name": "collector-01",
-      "service_name": "lm-collector",
+      "resource_hash": "abc123...",
       "data_points": 45670
     }
   ],
-  "datasources": [
-    {
-      "id": 1,
-      "name": "WinCollectorUsage",
-      "version": "1.0"
-    }
-  ],
   "time_range": {
-    "min": "2026-01-01T00:00:00Z",
-    "max": "2026-01-24T12:00:00Z"
+    "start": "2026-01-01T00:00:00Z",
+    "end": "2026-01-26T02:30:00Z"
   },
-  "total_data_points": 56000000
+  "total_data_points": 56000000,
+  "source": "synapse_datalake"
 }
 ```
 
@@ -368,13 +225,17 @@ Get inventory of available metrics, resources, and datasources.
 Extract training data for ML models with profile-based filtering.
 
 **Query Parameters:**
-- `profile` (optional): Feature profile name (collector, kubernetes, cloud_compute, network, database, application)
-- `hours` (optional): Lookback period in hours (default: 24, max: 168)
-- `limit` (optional): Maximum records to return (default: 10000, max: 100000)
+- `profile` (optional): Feature profile name
+- `start_time` (required): ISO 8601 timestamp
+- `end_time` (required): ISO 8601 timestamp
+- `metric_names` (optional): Comma-separated metric names
+- `resource_hash` (optional): Filter by resource hash
+- `limit` (optional): Maximum records (default: 10000)
+- `offset` (optional): Pagination offset (default: 0)
 
 **Example:**
 ```bash
-curl "https://{host}/api/ml/training-data?profile=collector&hours=24&limit=5000"
+curl "https://{host}/api/ml/training-data?start_time=2026-01-01T00:00:00Z&end_time=2026-01-25T00:00:00Z&limit=5000"
 ```
 
 **Response:** `200 OK`
@@ -382,33 +243,31 @@ curl "https://{host}/api/ml/training-data?profile=collector&hours=24&limit=5000"
 {
   "data": [
     {
-      "resource_id": 1,
-      "host_name": "collector-01",
-      "service_name": "lm-collector",
+      "resource_hash": "abc123...",
+      "datasource_name": "WinCollectorUsage",
       "metric_name": "ExecuteTime",
       "timestamp": "2026-01-24T12:00:00Z",
       "value": 42.5,
-      "datasource_instance": "inst1",
-      "datasource_name": "WinCollectorUsage"
+      "attributes": "{\"instance\": \"inst1\"}"
     }
   ],
   "meta": {
-    "profile": "collector",
-    "total_records": 5000,
-    "time_range": {
-      "start": "2026-01-23T12:00:00Z",
-      "end": "2026-01-24T12:00:00Z"
-    }
+    "total": 125000,
+    "limit": 5000,
+    "offset": 0,
+    "start_time": "2026-01-01T00:00:00Z",
+    "end_time": "2026-01-25T00:00:00Z",
+    "source": "synapse_datalake"
   }
 }
 ```
 
 ### GET /api/ml/profile-coverage
 
-Check which profile metrics are available in the database.
+Check which profile metrics are available in the Data Lake.
 
 **Query Parameters:**
-- `profile` (optional): Single profile to check (returns all profiles if not specified)
+- `profile` (optional): Single profile to check
 
 **Response:** `200 OK`
 ```json
@@ -420,82 +279,36 @@ Check which profile metrics are available in the database.
       "total_expected": 38,
       "available_count": 38,
       "coverage_percent": 100.0,
-      "available": ["ExecuteTime", "AvgExecTime", "ThreadCount", "..."],
+      "available": ["ExecuteTime", "AvgExecTime"],
       "missing": []
-    },
-    {
-      "name": "kubernetes",
-      "total_expected": 58,
-      "available_count": 47,
-      "coverage_percent": 81.0,
-      "available": ["cpuUsageNanoCores", "memoryUsageBytes", "..."],
-      "missing": ["networkRxErrors", "networkTxErrors", "..."]
     }
   ]
 }
 ```
 
-### GET /api/ml/quality
+---
 
-Assess data quality for ML training readiness.
+## Data Export (Hot Cache)
 
-**Query Parameters:**
-- `profile` (optional): Filter by profile name
-- `hours` (optional): Lookback period in hours (default: 24, max: 168)
+**Note:** Export endpoints require PostgreSQL hot cache to be enabled (`HOT_CACHE_ENABLED=true`). These are disabled by default in Data Lake only mode.
 
-**Response:** `200 OK`
-```json
-{
-  "summary": {
-    "overall_score": 85.5,
-    "freshness_score": 90.0,
-    "gap_score": 80.0,
-    "coverage_score": 86.5,
-    "total_resources": 12,
-    "stale_resources": 1,
-    "total_gaps": 4,
-    "total_metrics": 38,
-    "lookback_hours": 24,
-    "profile": "collector",
-    "checked_at": "2026-01-24T12:00:00Z"
-  },
-  "freshness": [
-    {
-      "resource_id": 1,
-      "host_name": "collector-01",
-      "last_update": "2026-01-24T11:59:30Z",
-      "age_minutes": 0.5,
-      "data_points": 15420,
-      "is_stale": false
-    }
-  ],
-  "gaps": [
-    {
-      "resource_id": 2,
-      "host_name": "collector-02",
-      "gap_start": "2026-01-24T08:00:00Z",
-      "gap_end": "2026-01-24T08:15:00Z",
-      "gap_minutes": 15.0
-    }
-  ],
-  "ranges": [
-    {
-      "metric_name": "ExecuteTime",
-      "sample_count": 5000,
-      "avg_value": 45.5,
-      "min_value": 10.2,
-      "max_value": 120.8,
-      "stddev": 15.3
-    }
-  ]
-}
-```
+### GET /metrics
 
-**Quality Scores:**
-- `freshness_score`: Percentage of resources with data in last 10 minutes
-- `gap_score`: 100 minus 5 points per detected gap (>10 min)
-- `coverage_score`: Percentage of metrics with sufficient samples (>=10)
-- `overall_score`: Average of all three scores
+Prometheus format export.
+
+**Status:** Requires hot cache
+
+### GET /grafana/search, POST /grafana/query
+
+Grafana SimpleJSON datasource.
+
+**Status:** Requires hot cache
+
+### GET /export/powerbi, /export/csv, /export/json
+
+Export endpoints for BI tools.
+
+**Status:** Requires hot cache
 
 ---
 
@@ -505,17 +318,15 @@ Assess data quality for ML training readiness.
 |------|-------------|------------|
 | 400 | Bad Request | Check request format and parameters |
 | 404 | Not Found | Verify endpoint URL |
-| 500 | Internal Server Error | Check logs, contact support |
-| 503 | Service Unavailable | Database unavailable or service degraded |
+| 500 | Internal Server Error | Check logs |
+| 503 | Service Unavailable | Data Lake or Synapse unavailable |
 
 **Error Response Format:**
 ```json
 {
-  "error": "Error description"
+  "detail": "Error description"
 }
 ```
-
-**Note:** Authentication (401/403) and rate limiting (429) are not currently implemented.
 
 ---
 
@@ -523,35 +334,28 @@ Assess data quality for ML training readiness.
 
 ### Data Ingestion
 
-1. **Use gzip compression** for payloads > 1KB (set `Content-Encoding: gzip` header)
-2. **Batch metrics** (recommended: 100-1000 metrics per request)
+1. **Use gzip compression** for payloads > 1KB
+2. **Batch metrics** (100-1000 per request)
 3. **Include timestamps** in Unix nanoseconds
-4. **Set proper resource attributes** for better filtering
-
-### Export
-
-1. **Use Prometheus export** (`/metrics`) for time-series monitoring tools
-2. **Use Grafana datasource** (`/grafana/search` and `/grafana/query`) for dashboards
-3. **Use PowerBI export** (`/export/powerbi`) for business intelligence
-4. **Use CSV/JSON** (`/export/csv`, `/export/json`) for ad-hoc analysis
-
-### Performance
-
-1. **Limit time ranges** when exporting data (default: last 24 hours)
-2. **Use appropriate query parameters** (start_time, end_time) to reduce data volume
-3. **Monitor application health** via `/api/health` endpoint
+4. **Set proper resource attributes** for filtering
 
 ### ML Training Data
 
-1. **Use feature profiles** to get domain-specific metrics (collector, kubernetes, cloud_compute)
-2. **Check profile coverage** before training to ensure required metrics are available
-3. **Monitor data quality** using `/api/ml/quality` before training runs
-4. **Use time-bounded queries** to limit data volume (hours parameter)
+1. **Use feature profiles** for domain-specific metrics
+2. **Check profile coverage** before training
+3. **Use time-bounded queries** to limit scan costs
+4. **Paginate large queries** with limit/offset
+
+### Cost Optimization
+
+1. Synapse queries scan Parquet files (~$5/TB)
+2. Use time-bounded queries to reduce scans
+3. Filter by specific metrics when possible
+4. Data Lake storage is cheaper than PostgreSQL
 
 ---
 
 ## Support
 
-**Documentation:** https://github.com/logicmonitor/HttpIngest/blob/main/FEATURES.md
-**Issues:** https://github.com/logicmonitor/HttpIngest/issues
-**Health Status:** https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health
+**Repository:** https://github.com/ryanmat/HttpIngest
+**Health Check:** https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health
