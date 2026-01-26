@@ -44,6 +44,9 @@ from src.datalake_writer import DataLakeWriter, DataLakeConfig
 from src.hot_cache_manager import HotCacheManager
 from src.ingestion_router import IngestionRouter, IngestionConfig
 
+# Import tracing (OpenTelemetry)
+from src.tracing import setup_tracing, shutdown_tracing
+
 # Synapse client is optional (requires pyodbc which needs ODBC drivers)
 try:
     from src.synapse_client import SynapseClient, SynapseConfig
@@ -128,6 +131,9 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Starting LogicMonitor Data Pipeline...")
     logger.info(f"Configuration: HOT_CACHE_ENABLED={HOT_CACHE_ENABLED}, SYNAPSE_ENABLED={SYNAPSE_ENABLED}")
+
+    # Initialize OpenTelemetry tracing
+    setup_tracing(app)
 
     global db_pool, datalake_writer, hot_cache_manager, ingestion_router, synapse_client, background_tasks
 
@@ -245,6 +251,9 @@ async def lifespan(app: FastAPI):
     if synapse_client:
         synapse_client.close()
         logger.info("Synapse connection closed")
+
+    # Shutdown tracing (flush pending spans)
+    shutdown_tracing()
 
     logger.info("Shutdown complete")
 
