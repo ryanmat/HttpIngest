@@ -102,13 +102,15 @@ SERVICE_VERSION_VALUE = "48.0.0"
 
 def get_tracing_config() -> dict:
     """Get tracing configuration from environment."""
+    # Default to lmotel OTLP endpoint for production tracing
+    default_endpoint = "http://20.242.145.102:4318/v1/traces"
     return {
         "service_name": os.getenv("OTEL_SERVICE_NAME", "httpingest"),
         "service_version": os.getenv("OTEL_SERVICE_VERSION", SERVICE_VERSION_VALUE),
-        "exporter_type": os.getenv("OTEL_EXPORTER_TYPE", "console"),
+        "exporter_type": os.getenv("OTEL_EXPORTER_TYPE", "otlp"),
         "lm_account": os.getenv("LM_ACCOUNT", ""),
         "lm_otel_token": os.getenv("LM_OTEL_TOKEN", ""),
-        "otlp_endpoint": os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+        "otlp_endpoint": os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", default_endpoint),
         "sample_rate": float(os.getenv("OTEL_TRACES_SAMPLER_ARG", "1.0")),
         "enabled": os.getenv("OTEL_TRACING_ENABLED", "true").lower() == "true",
     }
