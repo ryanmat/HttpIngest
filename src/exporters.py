@@ -19,12 +19,64 @@ import csv
 import io
 import hashlib
 import hmac
-from datetime import datetime, timedelta
+import os
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass, field, asdict
 from enum import Enum
 import psycopg2
 from psycopg2.extras import RealDictCursor
+
+# Hot cache retention limit (queries beyond this window will fail when hot cache is enabled)
+HOT_CACHE_RETENTION_HOURS = int(os.getenv("HOT_CACHE_RETENTION_HOURS", "48"))
+HOT_CACHE_ENABLED = os.getenv("HOT_CACHE_ENABLED", "false").lower() == "true"
+
+
+class HotCacheTimeRangeError(Exception):
+    """Raised when a query requests data beyond the hot cache retention window."""
+
+    def __init__(self, requested_start: datetime, earliest_allowed: datetime):
+        self.requested_start = requested_start
+        self.earliest_allowed = earliest_allowed
+        hours = HOT_CACHE_RETENTION_HOURS
+        super().__init__(
+            f"Query start time {requested_start.isoformat()} is beyond the {hours}h hot cache window. "
+            f"Earliest allowed: {earliest_allowed.isoformat()}. "
+            f"For historical data, use the ML training data API with Synapse."
+        )
+
+
+def validate_hot_cache_time_range(start_time: Optional[datetime], end_time: Optional[datetime]) -> None:
+    """
+    Validate that the requested time range falls within the hot cache retention window.
+
+    When HOT_CACHE_ENABLED is true, exporters query PostgreSQL which only retains
+    the last 48 hours of data. Queries requesting older data should fail with a
+    clear error directing users to the Synapse/Data Lake API for historical queries.
+
+    Args:
+        start_time: Query start time (None means "now")
+        end_time: Query end time (None means "now")
+
+    Raises:
+        HotCacheTimeRangeError: If start_time is older than the retention window
+    """
+    if not HOT_CACHE_ENABLED:
+        return
+
+    now = datetime.now(timezone.utc)
+    earliest_allowed = now - timedelta(hours=HOT_CACHE_RETENTION_HOURS)
+
+    # If no start_time specified, assume recent data (OK)
+    if start_time is None:
+        return
+
+    # Ensure start_time is timezone-aware for comparison
+    if start_time.tzinfo is None:
+        start_time = start_time.replace(tzinfo=timezone.utc)
+
+    if start_time < earliest_allowed:
+        raise HotCacheTimeRangeError(start_time, earliest_allowed)
 
 
 class ExportFormat(Enum):
@@ -106,6 +158,9 @@ class PrometheusExporter:
         query: TimeSeriesQuery
     ) -> List[MetricExport]:
         """Query metrics from database."""
+        # Validate time range is within hot cache window
+        validate_hot_cache_time_range(query.start_time, query.end_time)
+
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Build SQL query
             sql = """
@@ -312,6 +367,9 @@ class GrafanaSimpleJSONDataSource:
         interval: str
     ) -> List[List]:
         """Query time-series data."""
+        # Validate time range is within hot cache window
+        validate_hot_cache_time_range(start_time, end_time)
+
         with conn.cursor() as cur:
             sql = """
                 SELECT
@@ -422,6 +480,9 @@ class PowerBIExporter:
         top: int
     ) -> Tuple[List[MetricExport], int]:
         """Query metrics with pagination."""
+        # Validate time range is within hot cache window
+        validate_hot_cache_time_range(query.start_time, query.end_time)
+
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # Count total
             count_sql = """
@@ -581,6 +642,9 @@ class CSVJSONExporter:
         query: TimeSeriesQuery
     ) -> List[MetricExport]:
         """Query metrics from database."""
+        # Validate time range is within hot cache window
+        validate_hot_cache_time_range(query.start_time, query.end_time)
+
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             sql = """
                 SELECT

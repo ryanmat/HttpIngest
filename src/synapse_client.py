@@ -12,7 +12,6 @@ Cost: ~$5 per TB scanned (pay-per-query model)
 
 import logging
 import os
-import struct
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
