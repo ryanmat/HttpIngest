@@ -62,7 +62,7 @@ def create_lm_exporter(config: dict) -> Optional[OTLPSpanExporter]:
         logger.warning("LM_ACCOUNT or LM_OTEL_TOKEN not set, cannot create LM exporter")
         return None
 
-    endpoint = f"https://{account}.logicmonitor.com/rest/api/v3/traces"
+    endpoint = f"https://{account}.logicmonitor.com/rest/api/v1/traces"
 
     return OTLPSpanExporter(
         endpoint=endpoint,
