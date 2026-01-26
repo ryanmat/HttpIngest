@@ -11,6 +11,7 @@ organized by time partitions (year/month/day/hour).
 import asyncio
 import json
 import logging
+import math
 import os
 import uuid
 from dataclasses import dataclass
@@ -32,6 +33,19 @@ from src.otlp_parser import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_float(value: Optional[float]) -> Optional[float]:
+    """Sanitize float values for Parquet/Synapse compatibility.
+
+    Converts NaN and Infinity to None since Synapse Serverless SQL
+    cannot handle these special float values in queries.
+    """
+    if value is None:
+        return None
+    if math.isnan(value) or math.isinf(value):
+        return None
+    return value
 
 
 # Parquet schema for metric data
@@ -321,14 +335,17 @@ class DataLakeWriter:
         self.metric_def_buffer.clear()
 
     def _datapoint_to_dict(self, dp: MetricDataPoint, ingested_at: datetime) -> Dict[str, Any]:
-        """Convert MetricDataPoint to dictionary for Parquet."""
+        """Convert MetricDataPoint to dictionary for Parquet.
+
+        Sanitizes float values to remove NaN/Infinity which Synapse cannot query.
+        """
         ts = dp.timestamp
         return {
             'resource_hash': dp.resource_hash,
             'datasource_name': dp.datasource_name,
             'metric_name': dp.metric_name,
             'timestamp': ts,
-            'value_double': dp.value_double,
+            'value_double': _sanitize_float(dp.value_double),
             'value_int': dp.value_int,
             'attributes': json.dumps(dp.attributes) if dp.attributes else None,
             'ingested_at': ingested_at,

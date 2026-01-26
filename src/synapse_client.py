@@ -173,19 +173,34 @@ class SynapseClient:
         partition_filter = self._build_partition_filter(start_time, end_time)
 
         # Build the OPENROWSET query for Parquet files
+        # Read value_double as VARCHAR to handle NaN/Infinity in legacy files,
+        # then convert to float with TRY_CONVERT (returns NULL for invalid values)
         query = f"""
             SELECT
                 resource_hash,
                 datasource_name,
                 metric_name,
                 timestamp,
-                value_double,
+                TRY_CONVERT(float, value_double) as value_double,
                 value_int,
                 attributes,
                 ingested_at
             FROM OPENROWSET(
                 BULK '{self.config.metric_data_path}',
                 FORMAT = 'PARQUET'
+            ) WITH (
+                resource_hash VARCHAR(100),
+                datasource_name VARCHAR(500),
+                metric_name VARCHAR(500),
+                timestamp DATETIME2,
+                value_double VARCHAR(50),
+                value_int BIGINT,
+                attributes VARCHAR(MAX),
+                ingested_at DATETIME2,
+                year SMALLINT,
+                month TINYINT,
+                day TINYINT,
+                hour TINYINT
             ) AS [data]
             WHERE timestamp >= ? AND timestamp <= ?
             {partition_filter}
@@ -204,7 +219,33 @@ class SynapseClient:
         query += f" ORDER BY timestamp OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY"
 
         try:
-            cursor.execute(query, params)
+            # Convert datetime to ISO format strings for Synapse compatibility
+            str_params = []
+            for p in params:
+                if isinstance(p, datetime):
+                    str_params.append(p.strftime('%Y-%m-%dT%H:%M:%S'))
+                else:
+                    str_params.append(p)
+
+            logger.info(f"Executing Synapse training data query with params: {str_params[:2]}")
+            cursor.execute(query, str_params)
+
+            # Check if we got a result set
+            if cursor.description is None:
+                logger.warning("Synapse query returned no result set - may be no matching data")
+                return {
+                    "data": [],
+                    "meta": {
+                        "total": 0,
+                        "limit": limit,
+                        "offset": offset,
+                        "start_time": start_time.isoformat(),
+                        "end_time": end_time.isoformat(),
+                        "source": "synapse_datalake",
+                        "warning": "No matching data found in specified time range",
+                    },
+                }
+
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description]
 
@@ -221,16 +262,23 @@ class SynapseClient:
                 data.append(row_dict)
 
             # Get total count (separate query for pagination)
+            # Use same schema to avoid NaN errors in legacy files
             count_query = f"""
                 SELECT COUNT(*) as total
                 FROM OPENROWSET(
                     BULK '{self.config.metric_data_path}',
                     FORMAT = 'PARQUET'
+                ) WITH (
+                    timestamp DATETIME2,
+                    metric_name VARCHAR(500),
+                    resource_hash VARCHAR(100),
+                    year SMALLINT,
+                    month TINYINT
                 ) AS [data]
                 WHERE timestamp >= ? AND timestamp <= ?
                 {partition_filter}
             """
-            count_params = [start_time, end_time]
+            count_params = [start_time.strftime('%Y-%m-%dT%H:%M:%S'), end_time.strftime('%Y-%m-%dT%H:%M:%S')]
             if metric_names:
                 placeholders = ",".join(["?" for _ in metric_names])
                 count_query += f" AND metric_name IN ({placeholders})"
@@ -240,7 +288,8 @@ class SynapseClient:
                 count_params.append(resource_hash)
 
             cursor.execute(count_query, count_params)
-            total = cursor.fetchone()[0]
+            count_row = cursor.fetchone()
+            total = count_row[0] if count_row else 0
 
             return {
                 "data": data,

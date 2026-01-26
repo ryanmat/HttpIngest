@@ -252,7 +252,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LogicMonitor Data Pipeline",
     description="Unified data pipeline for LogicMonitor metrics",
-    version="32.0.0",
+    version="39.0.0",
     lifespan=lifespan
 )
 
@@ -416,7 +416,7 @@ async def health_check():
     health_status = {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "version": "22.0.0",
+        "version": app.version,
         "mode": "datalake_only" if not HOT_CACHE_ENABLED else "datalake_with_hot_cache",
         "components": {}
     }
@@ -751,6 +751,7 @@ async def ml_training_data(
     - application: APM metrics
     """
     try:
+        logger.info(f"ML training-data: db_pool={db_pool is not None}, synapse_client={synapse_client is not None}")
         if not db_pool and not synapse_client:
             return JSONResponse(content={"error": "No data source available"}, status_code=503)
 

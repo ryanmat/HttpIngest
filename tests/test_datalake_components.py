@@ -142,6 +142,42 @@ class TestDataLakeWriter:
         assert result["value_int"] == 100
         assert result["attributes"] is None
 
+    def test_datapoint_to_dict_sanitizes_nan(self, writer):
+        """Test that NaN values are converted to None for Synapse compatibility."""
+        now = datetime.now(timezone.utc)
+        dp = MetricDataPoint(
+            resource_hash="abc123",
+            datasource_name="test-ds",
+            datasource_version="1.0",
+            metric_name="cpu.usage",
+            timestamp=now,
+            value_double=float("nan"),
+            value_int=None,
+            attributes=None,
+        )
+
+        result = writer._datapoint_to_dict(dp, now)
+
+        assert result["value_double"] is None
+
+    def test_datapoint_to_dict_sanitizes_infinity(self, writer):
+        """Test that Infinity values are converted to None for Synapse compatibility."""
+        now = datetime.now(timezone.utc)
+        dp = MetricDataPoint(
+            resource_hash="abc123",
+            datasource_name="test-ds",
+            datasource_version="1.0",
+            metric_name="cpu.usage",
+            timestamp=now,
+            value_double=float("inf"),
+            value_int=None,
+            attributes=None,
+        )
+
+        result = writer._datapoint_to_dict(dp, now)
+
+        assert result["value_double"] is None
+
     def test_get_buffer_stats_empty(self, writer):
         """Test buffer stats when empty."""
         stats = writer.get_buffer_stats()

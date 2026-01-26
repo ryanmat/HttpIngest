@@ -509,8 +509,14 @@ class MLDataService:
                 profile_def["categorical_features"]
             )
 
-        # Route to Synapse for historical queries
-        if self._should_use_synapse(start_time):
+        # Route to Synapse for historical queries OR when hot cache is disabled
+        # If hot cache (pool) is not available, always use Synapse regardless of time range
+        use_synapse = self._should_use_synapse(start_time) or (self.synapse_client and not self.pool)
+        logger.info(
+            f"Training data routing: synapse_client={self.synapse_client is not None}, "
+            f"pool={self.pool is not None}, use_synapse={use_synapse}, start_time={start_time}"
+        )
+        if use_synapse:
             logger.info(f"Routing training data query to Synapse (start_time={start_time})")
             return await self._get_training_data_from_synapse(
                 start_time=start_time,
