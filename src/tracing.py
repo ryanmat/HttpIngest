@@ -20,11 +20,16 @@ Environment variables:
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, Sequence
 
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+from opentelemetry.sdk.trace import TracerProvider, ReadableSpan
+from opentelemetry.sdk.trace.export import (
+    BatchSpanProcessor,
+    ConsoleSpanExporter,
+    SpanExporter,
+    SpanExportResult,
+)
 from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -34,6 +39,62 @@ from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
 logger = logging.getLogger(__name__)
+
+# Enable verbose OTEL logging when debug is enabled
+if os.getenv("OTEL_DEBUG", "false").lower() == "true":
+    logging.getLogger("opentelemetry").setLevel(logging.DEBUG)
+
+
+class LoggingSpanExporter(SpanExporter):
+    """Wrapper exporter that logs export results for debugging."""
+
+    def __init__(self, wrapped_exporter: SpanExporter, exporter_name: str = "unknown"):
+        self._wrapped = wrapped_exporter
+        self._name = exporter_name
+        self._export_count = 0
+        self._success_count = 0
+        self._failure_count = 0
+
+    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
+        self._export_count += 1
+        span_count = len(spans)
+
+        try:
+            result = self._wrapped.export(spans)
+
+            if result == SpanExportResult.SUCCESS:
+                self._success_count += 1
+                logger.info(
+                    f"[{self._name}] Exported {span_count} spans successfully "
+                    f"(total: {self._success_count}/{self._export_count})"
+                )
+            else:
+                self._failure_count += 1
+                logger.error(
+                    f"[{self._name}] Failed to export {span_count} spans: {result} "
+                    f"(failures: {self._failure_count}/{self._export_count})"
+                )
+
+            return result
+
+        except Exception as e:
+            self._failure_count += 1
+            logger.error(
+                f"[{self._name}] Exception exporting {span_count} spans: {e} "
+                f"(failures: {self._failure_count}/{self._export_count})"
+            )
+            return SpanExportResult.FAILURE
+
+    def shutdown(self) -> None:
+        logger.info(
+            f"[{self._name}] Shutting down. Stats: "
+            f"exports={self._export_count}, success={self._success_count}, "
+            f"failures={self._failure_count}"
+        )
+        self._wrapped.shutdown()
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+        return self._wrapped.force_flush(timeout_millis)
 
 # Version should match pyproject.toml
 SERVICE_VERSION_VALUE = "39.0.0"
@@ -63,6 +124,7 @@ def create_lm_exporter(config: dict) -> Optional[OTLPSpanExporter]:
         return None
 
     endpoint = f"https://{account}.logicmonitor.com/rest/api/v1/traces"
+    logger.info(f"Creating LogicMonitor exporter: endpoint={endpoint}")
 
     return OTLPSpanExporter(
         endpoint=endpoint,
@@ -130,6 +192,12 @@ def setup_tracing(app=None) -> Optional[TracerProvider]:
         exporter = ConsoleSpanExporter()
 
     if exporter:
+        # Wrap with logging exporter for verbose debugging
+        verbose = os.getenv("OTEL_VERBOSE", "true").lower() == "true"
+        if verbose and not isinstance(exporter, ConsoleSpanExporter):
+            exporter = LoggingSpanExporter(exporter, exporter_type)
+            logger.info(f"Enabled verbose export logging for {exporter_type}")
+
         processor = BatchSpanProcessor(exporter)
         provider.add_span_processor(processor)
         logger.info(f"Added {exporter_type} span processor")
