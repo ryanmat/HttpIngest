@@ -262,7 +262,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LogicMonitor Data Pipeline",
     description="Unified data pipeline for LogicMonitor metrics",
-    version="39.0.0",
+    version="48.0.0",
     lifespan=lifespan
 )
 
