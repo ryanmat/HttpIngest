@@ -37,10 +37,11 @@ HOT_CACHE_HOURS = int(os.getenv("HOT_CACHE_RETENTION_HOURS", "48"))
 FEATURE_PROFILES = {
     # LogicMonitor Collector Self-Monitoring
     # Datasources: LogicMonitor_Collector_*
+    # Metric names validated against Data Lake (stlmingestdatalake) 2026-01-28
     "collector": {
         "description": "LogicMonitor Collector self-monitoring metrics",
         "numerical_features": [
-            # Execution performance
+            # Execution performance (DataCollectingTasks, ConfigCollectingTask, ReporterTask)
             "ExecuteTime",
             "AvgExecTime",
             "MaxExecTime",
@@ -48,39 +49,51 @@ FEATURE_PROFILES = {
             "CollectTime",
             "DispatchTime",
             "ProcessExecuteTime",
-            # Resource utilization
+            "SuccessExecuteTime",
+            "SuccessRate",
+            "PostProcessTime",
+            "PrepareTime",
+            "SendtoReporterTime",
+            # CPU and JVM resources (ThreadCPUUsage, JVMMemoryPools, JVMGarbageCollection)
             "CpuUsage",
-            "cpuUsage",
-            "HeapUsage",
-            "NonHeapUsage",
-            "HeapCommit",
-            "NonHeapCommit",
-            "MemoryUsed",
-            "CollectorMemory",
-            # Thread health
+            "ProcessorCount",
+            "Used",
+            "Committed",
+            "MaximumMemory",
+            "CollectionTime",
+            # Thread health (ThreadUsage, ThreadCPUUsage)
             "ThreadCount",
-            "DaemonThreadCount",
+            "ThreadCnt",
             "RunningThreads",
-            "CurrentThreads",
             "RunnableThreadCnt",
-            # Queue metrics
+            # Queue metrics (Throttler, BufferDataReporter, LMLogs)
             "QueueSize",
-            "QueueLength",
             "BigQueueSize",
             "TasksCountInQueue",
-            # Failure indicators
+            "SizeOfBigQueue",
+            "ItemsInMemoryQueue",
+            # Failure indicators (DataCollectingTasks, ReporterTask, Heartbeat)
             "FailRate",
             "FailureRate",
-            "Failure",
+            "Fail",
             "FailExecuteTime",
             "ExecuteFailed",
             "EnqueudFailed",
-            # System health
-            "Uptime",
-            "RunningCount",
+            "NanTaskRate",
+            "HangCount",
+            # Reporter and data pipeline (BufferDataReporter, ReporterTask)
             "ReportTaskCount",
+            "UnReported",
+            "EntryFailureCount",
+            "EntryFailureRate",
+            "EntrySuccessCount",
+            "EntrySuccessRate",
+            "ComposeFailedCount",
+            # System health (DataCollectingTasks, ConfigCollectingTask)
+            "RunningCount",
             "ProcessCount",
             "InstanceCount",
+            "ExecutingTasks",
         ],
         "categorical_features": [
             "Active",
@@ -89,19 +102,17 @@ FEATURE_PROFILES = {
         ],
     },
     # Kubernetes/Container Workloads
-    # Datasources: Kubernetes_*, Argus_*, KubeVirt_*
+    # Datasources: Kubernetes_KSM_*, Kubernetes_PingK8s, Kubernetes_Service, Argus_*
+    # Metric names validated against Data Lake (stlmingestdatalake) 2026-01-28
     "kubernetes": {
         "description": "Container orchestration workloads (K8s, ECS, Docker Swarm)",
         "numerical_features": [
-            # CPU metrics
+            # CPU metrics (KSM_Pods)
             "cpuUsageNanoCores",
             "cpuUsageCoreNanoSeconds",
             "cpuLimits",
             "cpuRequests",
-            "cpu_usage_seconds",
-            "cpu_system_seconds",
-            "cpu_user_seconds",
-            # Memory metrics
+            # Memory metrics (KSM_Pods)
             "memoryUsageBytes",
             "memoryWorkingSetBytes",
             "memoryRssBytes",
@@ -110,42 +121,49 @@ FEATURE_PROFILES = {
             "memoryAvailableBytes",
             "memoryMajorPageFaults",
             "memoryPageFaults",
-            "memory_usage_percent",
-            "memory_used_bytes",
-            "memory_available_bytes",
-            "memory_resident_bytes",
-            # Network metrics
+            # Network metrics (KSM_Pods)
             "networkRxBytes",
             "networkTxBytes",
             "networkRxErrors",
             "networkTxErrors",
-            "rx_bytes",
-            "tx_bytes",
-            "rx_packets",
-            "tx_packets",
-            "rx_errors",
-            "tx_errors",
-            # Storage metrics
+            # Storage metrics (KSM_Pods)
             "fsUsedBytes",
             "fsAvailableBytes",
             "fsCapacityBytes",
             "volumeUsedBytes",
             "volumeAvailableBytes",
-            "read_bytes",
-            "write_bytes",
-            "read_iops",
-            "write_iops",
-            # Pod/Container status
+            "volumeCapacityBytes",
+            "volumeInodes",
+            "volumeInodesFree",
+            # Pod/Container status (KSM_Pods)
             "kubePodContainerStatusRestartsTotal",
-            "statusRestartCount",
+            "kubePodStartTime",
+            # Deployment metrics (KSM_Deployments)
             "kubeDeploymentStatusReplicas",
             "kubeDeploymentStatusReplicasAvailable",
             "kubeDeploymentStatusReplicasReady",
-            # Node metrics
+            "kubeDeploymentStatusReplicasUnavailable",
+            "kubeDeploymentStatusReplicasUpdated",
+            "kubeDeploymentSpecReplicas",
+            # Node metrics (KSM_Pods)
             "kubeNodeStatusAllocatableCpu",
             "kubeNodeStatusAllocatableMemory",
             "kubeNodeStatusCapacityCpu",
             "kubeNodeStatusCapacityMemory",
+            # Node health signals (KSM_Pods)
+            "kubeNodeStatusConditionDiskPressure",
+            "kubeNodeStatusConditionMemoryPressure",
+            "kubeNodeStatusConditionPIDPressure",
+            # StatefulSet metrics (KSM_Pods)
+            "kubeStatefulsetStatusReplicas",
+            "kubeStatefulsetStatusReplicasReady",
+            # DaemonSet metrics (KSM_Pods)
+            "kubeDaemonsetStatusNumberReady",
+            "kubeDaemonsetStatusNumberUnavailable",
+            # Ping/Network (PingK8s)
+            "average",
+            "maxrtt",
+            "minrtt",
         ],
         "categorical_features": [
             "podConditionPhase",
@@ -154,8 +172,7 @@ FEATURE_PROFILES = {
             "kubePodContainerStatusRunning",
             "kubePodContainerStatusWaiting",
             "kubePodContainerStatusTerminated",
-            "healthRunning",
-            "healthWaiting",
+            "kubePodContainerStatusReady",
             "kubeNodeStatusConditionReady",
             "kubeDeploymentStatusAvailableTrue",
             "status",
