@@ -31,7 +31,7 @@ HttpIngest has migrated to Data Lake only mode:
 - Primary storage: Azure Data Lake Gen2 (Parquet)
 - Query engine: Azure Synapse Serverless SQL
 - ML endpoints: `/api/ml/*` (backed by Synapse)
-- PostgreSQL hot cache: Disabled by default
+- PostgreSQL hot cache: Dormant (available for dashboarding if needed)
 
 ## No Changes Required in quantum_mcp
 
@@ -67,7 +67,7 @@ Before running quantum optimization tests, verify HttpIngest has data:
 # Check HttpIngest health
 curl https://ca-cta-lm-ingest.../api/health
 
-# Expected: synapse: healthy
+# Expected: synapse: healthy, datalake: healthy
 
 # Check data inventory
 curl https://ca-cta-lm-ingest.../api/ml/inventory

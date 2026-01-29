@@ -3,10 +3,11 @@
 
 # LogicMonitor Data Pipeline - API Documentation
 
-**Version:** 32.0
+**Version:** 49.0.0
 **Base URL:** `https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io`
 **Protocol:** HTTPS
-**Storage Mode:** Data Lake only (v32+)
+**Storage:** Azure Data Lake Gen2 (primary) + Azure Synapse Serverless SQL (query engine)
+**Hot Cache:** PostgreSQL (dormant, for dashboarding if/when needed)
 
 ---
 
@@ -88,13 +89,12 @@ Content-Encoding: gzip (optional, recommended for >1KB)
 ```json
 {
   "status": "success",
-  "message": "Data ingested successfully",
-  "buffered": {
-    "metric_data": 150,
-    "resources": 1,
-    "datasources": 5,
-    "metric_definitions": 25
-  }
+  "stats": {
+    "datalake_written": 150,
+    "hot_cache_written": 0,
+    "errors": []
+  },
+  "timestamp": "2026-01-29T12:00:00Z"
 }
 ```
 
@@ -110,31 +110,50 @@ curl -X POST https://ca-cta-lm-ingest.../api/HttpIngest \
 
 ## Health & Monitoring
 
+### GET /health
+
+Root health check for Azure Container Apps probes. Lightweight, no component checks.
+
+**Response:** `200 OK`
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-01-29T23:31:19Z",
+  "version": "49.0.0"
+}
+```
+
 ### GET /api/health
 
-Health check endpoint with component-level status.
+Detailed health check endpoint with component-level status.
 
 **Response:** `200 OK` (healthy)
 ```json
 {
   "status": "healthy",
-  "timestamp": "2026-01-26T02:30:00Z",
-  "version": "32.0.0",
+  "timestamp": "2026-01-29T23:31:19Z",
+  "version": "49.0.0",
   "mode": "datalake_only",
   "components": {
     "datalake": {
       "status": "healthy",
       "buffer": {
-        "metric_data_buffered": 827,
-        "resources_buffered": 1,
-        "datasources_buffered": 33,
-        "metric_definitions_buffered": 332,
+        "metric_data_buffered": 1319,
+        "resources_buffered": 80,
+        "datasources_buffered": 31,
+        "metric_definitions_buffered": 374,
         "flush_threshold": 10000
       }
     },
     "hot_cache": {
       "status": "disabled",
       "enabled": false
+    },
+    "ingestion_router": {
+      "config": {
+        "write_to_datalake": true,
+        "write_to_hot_cache": false
+      }
     },
     "synapse": {
       "status": "healthy",
@@ -152,9 +171,26 @@ Health check endpoint with component-level status.
 
 **Components:**
 - `datalake`: Data Lake writer buffer status
-- `hot_cache`: PostgreSQL hot cache status (disabled by default)
-- `synapse`: Synapse Serverless SQL connection status
+- `hot_cache`: PostgreSQL hot cache status (dormant by default, for dashboarding)
+- `ingestion_router`: Routing config showing active storage backends
+- `synapse`: Synapse Serverless SQL connection status (query engine for Precursor)
 - `background_tasks`: Running background tasks
+
+### GET /metrics
+
+Prometheus-format metrics using in-memory counters. No database dependency.
+
+**Response:** `200 OK` (text/plain)
+```
+httpingest_requests_total 40028
+httpingest_requests_success_total 40028
+httpingest_requests_error_total 0
+httpingest_metrics_ingested_total 1259335
+httpingest_datalake_flushes_total 185
+httpingest_datalake_records_written_total 1006331
+httpingest_datalake_buffer_size 1539
+httpingest_info{version="49.0.0",mode="datalake_only"} 1
+```
 
 ---
 
@@ -215,8 +251,7 @@ Get inventory of available metrics, resources, and datasources from Data Lake.
     "start": "2026-01-01T00:00:00Z",
     "end": "2026-01-26T02:30:00Z"
   },
-  "total_data_points": 56000000,
-  "source": "synapse_datalake"
+  "total_data_points": 56000000
 }
 ```
 
@@ -226,11 +261,10 @@ Extract training data for ML models with profile-based filtering.
 
 **Query Parameters:**
 - `profile` (optional): Feature profile name
-- `start_time` (required): ISO 8601 timestamp
-- `end_time` (required): ISO 8601 timestamp
-- `metric_names` (optional): Comma-separated metric names
-- `resource_hash` (optional): Filter by resource hash
-- `limit` (optional): Maximum records (default: 10000)
+- `start_time` (optional): ISO 8601 timestamp (default: 7 days ago)
+- `end_time` (optional): ISO 8601 timestamp (default: now)
+- `resource_id` (optional): Filter by resource ID (integer)
+- `limit` (optional): Maximum records (default: 10000, max: 100000)
 - `offset` (optional): Pagination offset (default: 0)
 
 **Example:**
@@ -243,12 +277,15 @@ curl "https://{host}/api/ml/training-data?start_time=2026-01-01T00:00:00Z&end_ti
 {
   "data": [
     {
-      "resource_hash": "abc123...",
-      "datasource_name": "WinCollectorUsage",
-      "metric_name": "ExecuteTime",
-      "timestamp": "2026-01-24T12:00:00Z",
-      "value": 42.5,
-      "attributes": "{\"instance\": \"inst1\"}"
+      "resource_hash": "5cc48976a64a...",
+      "datasource_name": "LogicMonitor_Collector_ThreadUsage",
+      "metric_name": "ThreadCount",
+      "timestamp": "2026-01-28T17:56:11.046000",
+      "value_double": 40.0,
+      "value_int": null,
+      "attributes": "{\"dataSourceInstanceName\": \"...\", \"datapointid\": \"17189\"}",
+      "ingested_at": "2026-01-28T17:56:11.819766",
+      "value": 40.0
     }
   ],
   "meta": {
@@ -256,15 +293,19 @@ curl "https://{host}/api/ml/training-data?start_time=2026-01-01T00:00:00Z&end_ti
     "limit": 5000,
     "offset": 0,
     "start_time": "2026-01-01T00:00:00Z",
-    "end_time": "2026-01-25T00:00:00Z",
-    "source": "synapse_datalake"
+    "end_time": "2026-01-25T00:00:00Z"
   }
 }
 ```
 
+**Note:** When querying via Synapse, response includes `value_double`, `value_int`, and computed `value` fields.
+When querying via PostgreSQL hot cache, response includes `resource_id`, `host_name`, `service_name`, `datasource_instance` fields instead.
+
 ### GET /api/ml/profile-coverage
 
-Check which profile metrics are available in the Data Lake.
+Check which profile metrics are available in the database.
+
+**Status:** Requires hot cache (PostgreSQL). Returns 503 without it.
 
 **Query Parameters:**
 - `profile` (optional): Single profile to check
@@ -276,8 +317,8 @@ Check which profile metrics are available in the Data Lake.
     {
       "name": "collector",
       "description": "LogicMonitor Collector self-monitoring metrics",
-      "total_expected": 38,
-      "available_count": 38,
+      "total_expected": 47,
+      "total_available": 47,
       "coverage_percent": 100.0,
       "available": ["ExecuteTime", "AvgExecTime"],
       "missing": []
@@ -286,29 +327,60 @@ Check which profile metrics are available in the Data Lake.
 }
 ```
 
+### GET /api/ml/quality
+
+Assess data quality for ML training readiness.
+
+**Status:** Requires hot cache (PostgreSQL). Returns 503 without it.
+
+**Query Parameters:**
+- `profile` (optional): Filter by profile name
+- `hours` (optional): Lookback period, 1-168 (default: 24)
+
+**Response:** `200 OK`
+```json
+{
+  "freshness": [...],
+  "gaps": [...],
+  "ranges": [...],
+  "summary": {"score": 85}
+}
+```
+
+---
+
+## Endpoint Availability by Mode
+
+| Endpoint | Data Lake + Synapse | Requires Hot Cache |
+|----------|--------------------|--------------------|
+| `GET /health` | Works | No |
+| `GET /api/health` | Works | No |
+| `GET /metrics` | Works | No |
+| `POST /api/HttpIngest` | Works | No |
+| `GET /api/ml/profiles` | Works | No |
+| `GET /api/ml/inventory` | Works (via Synapse) | No |
+| `GET /api/ml/training-data` | Works (via Synapse) | No |
+| `GET /api/ml/profile-coverage` | Returns 503 | Yes |
+| `GET /api/ml/quality` | Returns 503 | Yes |
+| `GET /grafana/search` | Returns 503 | Yes |
+| `POST /grafana/query` | Returns 503 | Yes |
+| `GET /export/powerbi` | Returns 503 | Yes |
+| `GET /export/csv` | Returns 503 | Yes |
+| `GET /export/json` | Returns 503 | Yes |
+
 ---
 
 ## Data Export (Hot Cache)
 
-**Note:** Export endpoints require PostgreSQL hot cache to be enabled (`HOT_CACHE_ENABLED=true`). These are disabled by default in Data Lake only mode.
-
-### GET /metrics
-
-Prometheus format export.
-
-**Status:** Requires hot cache
+**Note:** Export endpoints require PostgreSQL hot cache (`HOT_CACHE_ENABLED=true`). Hot cache is dormant by default. Enable it when real-time dashboarding is needed.
 
 ### GET /grafana/search, POST /grafana/query
 
 Grafana SimpleJSON datasource.
 
-**Status:** Requires hot cache
-
 ### GET /export/powerbi, /export/csv, /export/json
 
 Export endpoints for BI tools.
-
-**Status:** Requires hot cache
 
 ---
 

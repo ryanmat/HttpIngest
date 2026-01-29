@@ -3,31 +3,34 @@
 
 # HttpIngest TODO
 
-## Current Sprint: Data Lake Only Mode (v32)
+## Current: v49 — Data Lake + Synapse
 
-### Completed
+### Architecture
 
-- [x] Deploy v32 with Data Lake only mode (2026-01-26)
-  - Disabled PostgreSQL hot cache (cost savings)
-  - Scaled replicas from 30 to 1-5 range
-  - Fixed "pool is closed" errors from token refresh bug
-- [x] Fix Synapse Serverless SQL integration (2026-01-26)
-  - Enabled Synapse for ML query layer
-  - Fixed authentication (ActiveDirectoryMsi)
-  - Fixed firewall (AllowAllWindowsAzureIps)
-  - Fixed Parquet path wildcards (year=*/month=*/...)
-
-### Architecture Change
-
-The application now runs in **Data Lake only mode**:
 - Primary storage: Azure Data Lake Gen2 (stlmingestdatalake)
-- Hot cache: Disabled (PostgreSQL not needed)
-- Synapse: Disabled (ML queries via Data Lake if needed later)
-- Dashboards: To be handled in LogicMonitor directly
+- Query engine: Azure Synapse Serverless SQL (~$5/TB scanned)
+- Hot cache: Dormant (PostgreSQL available for dashboarding if/when needed)
+- Metrics: In-memory Prometheus counters (no DB dependency)
+- Health: Root /health endpoint for Azure Container Apps probes
+- ML endpoints: /api/ml/* backed by Synapse for Precursor integration
+- Export endpoints (Grafana, PowerBI, CSV, JSON): Return 503 without hot cache
+- Replicas: 1-5 (auto-scaling on HTTP concurrency)
+
+### Recent Completed
+
+- [x] Replace PostgreSQL-dependent /metrics with in-memory counters (v49)
+- [x] Add /health root endpoint for container probes (v49)
+- [x] Guard export endpoints with hot cache checks (v49)
+- [x] Align ML feature profiles with Data Lake metric names (v48)
+- [x] Default tracing to lmotel OTLP endpoint (v48)
+- [x] Deploy Data Lake only mode, disable PostgreSQL (v32)
+- [x] Fix Synapse Serverless SQL integration (v32)
 
 ### Optional Future Work
 
-- [ ] Re-enable hot cache if real-time dashboards needed (requires fixing token refresh bug)
+- [ ] Enable hot cache if real-time dashboards needed (requires fixing token refresh bug)
+- [ ] Migrate /api/ml/profile-coverage to Synapse backend (currently PostgreSQL-only)
+- [ ] Migrate /api/ml/quality to Synapse backend (currently PostgreSQL-only)
 - [ ] Add more LM metric names to profiles as discovered
 - [ ] Add resource filtering to training-data endpoint
 
@@ -68,9 +71,10 @@ The application now runs in **Data Lake only mode**:
 ## Notes
 
 - HttpIngest does NOT directly integrate with quantum_mcp
-- Current production version: v32 (Data Lake only mode)
-- Mode: datalake_only (PostgreSQL disabled, Synapse enabled)
+- Current production version: v49 (Data Lake + Synapse)
+- Mode: datalake_only (PostgreSQL hot cache dormant, Synapse enabled)
 - Data Lake account: stlmingestdatalake
-- Synapse server: syn-lm-analytics-ondemand.sql.azuresynapse.net
+- Synapse server: syn-lm-analytics-ondemand.sql.azuresynapse.net (enabled, query layer for Precursor)
 - Replicas: 1-5 (auto-scaling on HTTP concurrency)
-- ML endpoints use Synapse Serverless SQL (~$5/TB scanned)
+- Precursor project: /Users/ryan.matuszewski/dev/repositories/ai/predictive-insights
+- /api/ml/inventory may timeout on Synapse (full-table scan, no partition pruning)

@@ -126,6 +126,7 @@ The training data format has changed slightly:
 
 ## Testing
 
-1. Check health: `curl .../api/health` (expect synapse: healthy)
-2. Check inventory: `curl .../api/ml/inventory`
-3. Test small query: `curl ".../api/ml/training-data?limit=100&start_time=...&end_time=..."`
+1. Check health: `curl .../api/health` (expect synapse: healthy, datalake: healthy)
+2. Test training data: `curl ".../api/ml/training-data?limit=5&start_time=2026-01-28T00:00:00Z&end_time=2026-01-30T00:00:00Z"`
+3. Check profiles: `curl .../api/ml/profiles`
+4. Note: /api/ml/inventory may timeout on large datasets (full Synapse scan, no partition pruning)

@@ -16,7 +16,7 @@ HttpIngest runs in **Data Lake only mode** - all OTLP metrics are written to Azu
 - **Container App:** `ca-cta-lm-ingest`
 - **Resource Group:** `CTA_Resource_Group`
 - **Data Lake:** `stlmingestdatalake` (Azure Data Lake Gen2)
-- **Current Version:** v48
+- **Current Version:** v49
 
 **Endpoints:**
 - Health: `https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health`
@@ -27,13 +27,13 @@ HttpIngest runs in **Data Lake only mode** - all OTLP metrics are written to Azu
 ```bash
 # 1. Build image in ACR
 az acr build --registry acrctalmhttps001 \
-  --image httpingest:v30 \
+  --image httpingest:v49 \
   --file Dockerfile.containerapp .
 
 # 2. Deploy to Container App
 az containerapp update --name ca-cta-lm-ingest \
   --resource-group CTA_Resource_Group \
-  --image acrctalmhttps001.azurecr.io/httpingest:v30
+  --image acrctalmhttps001.azurecr.io/httpingest:v49
 
 # 3. Verify health
 curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health
@@ -42,9 +42,9 @@ curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api
 ## Environment Variables
 
 **Required (set on Container App):**
-- `HOT_CACHE_ENABLED=false` - Disables PostgreSQL hot cache
-- `SYNAPSE_ENABLED=false` - Disables Synapse analytics
-- `ENABLE_COLLECTOR_PUBLISHER=true` - Enables LogicMonitor collector data
+- `HOT_CACHE_ENABLED=false` - PostgreSQL hot cache dormant (enable for dashboarding)
+- `SYNAPSE_ENABLED=true` - Synapse query engine for Precursor ML endpoints
+- `USE_MANAGED_IDENTITY=true` - Azure managed identity for Data Lake and Synapse auth
 
 **Data Lake Configuration (managed by Azure):**
 - Uses managed identity for authentication
@@ -63,7 +63,7 @@ Traces flow through the lmotel collector deployed in AKS:
 HttpIngest (Azure Container App)
     |
     v OTLP/HTTP (port 4318)
-lmotel LoadBalancer (20.242.145.102)
+lmotel LoadBalancer (13.92.30.232)
     |
     v
 LogicMonitor APM (lmryanmatuszewski.logicmonitor.com)
@@ -75,7 +75,7 @@ LogicMonitor APM (lmryanmatuszewski.logicmonitor.com)
 OTEL_TRACING_ENABLED=true                              # Enable/disable tracing
 OTEL_SERVICE_NAME=httpingest                           # Service name in traces
 OTEL_EXPORTER_TYPE=otlp                                # otlp, logicmonitor, or console
-OTEL_EXPORTER_OTLP_ENDPOINT=http://20.242.145.102:4318/v1/traces  # lmotel endpoint
+OTEL_EXPORTER_OTLP_ENDPOINT=http://13.92.30.232:4318/v1/traces  # lmotel endpoint
 OTEL_SERVICE_NAMESPACE=precursor-platform              # Groups services in APM topology
 OTEL_TRACES_SAMPLER_ARG=1.0                            # Sampling rate (0.0-1.0)
 ```
@@ -88,7 +88,7 @@ az containerapp update --name ca-cta-lm-ingest \
   --set-env-vars \
     OTEL_TRACING_ENABLED=true \
     OTEL_EXPORTER_TYPE=otlp \
-    OTEL_EXPORTER_OTLP_ENDPOINT=http://20.242.145.102:4318/v1/traces \
+    OTEL_EXPORTER_OTLP_ENDPOINT=http://13.92.30.232:4318/v1/traces \
     OTEL_SERVICE_NAME=httpingest \
     OTEL_SERVICE_NAMESPACE=precursor-platform
 ```
@@ -148,11 +148,11 @@ curl -s https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/
 {
   "status": "healthy",
   "mode": "datalake_only",
-  "version": "22.0.0",
+  "version": "49.0.0",
   "components": {
     "datalake": { "status": "healthy" },
-    "hot_cache": { "status": "disabled" },
-    "synapse": { "status": "disabled" }
+    "hot_cache": { "status": "disabled", "enabled": false },
+    "synapse": { "status": "healthy", "server": "syn-lm-analytics-ondemand.sql.azuresynapse.net" }
   }
 }
 ```
@@ -201,5 +201,5 @@ az containerapp show --name ca-cta-lm-ingest \
 
 ---
 
-**Last Updated:** 2026-01-26
-**Current Version:** v48 (Data Lake only mode, Synapse ML query layer, OpenTelemetry tracing via lmotel)
+**Last Updated:** 2026-01-29
+**Current Version:** v49 (Data Lake + Synapse query engine, OpenTelemetry tracing via lmotel)

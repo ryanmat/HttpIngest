@@ -3,110 +3,101 @@
 
 # HttpIngest Implementation Plan
 
-This document outlines the implementation roadmap for enhancing HttpIngest to serve as the data layer for the LM Predictive Analytics ML ecosystem.
+This document outlines the implementation roadmap for HttpIngest as the data layer for the LM Predictive Analytics ML ecosystem.
 
-## Current State (v14)
+## Current State (v49)
 
-HttpIngest currently provides:
+HttpIngest provides:
 - OTLP metric ingestion from LogicMonitor Collectors
-- Normalized PostgreSQL schema (resources, datasources, metric_definitions, metric_data)
-- Export endpoints (Prometheus, Grafana, PowerBI, CSV, JSON)
-- Azure Container Apps deployment with managed identity
+- Azure Data Lake Gen2 primary storage (Parquet, time-partitioned)
+- Azure Synapse Serverless SQL query engine for ML endpoints
+- In-memory Prometheus metrics (no DB dependency)
+- Root /health and detailed /api/health endpoints
+- PostgreSQL hot cache (dormant, available for dashboarding if needed)
+- OpenTelemetry tracing via lmotel to LogicMonitor APM
 
-## Target State
+## Architecture
 
-HttpIngest will provide ML-ready data services for Precursor:
-- Metrics inventory API for profile discovery
-- Training data streaming endpoint
-- Data quality metrics
-- Profile coverage reporting
-
-## Implementation Phases
-
-### Phase A: Core ML Endpoints (Current Focus)
-
-**Goal**: Provide minimal endpoints needed for Precursor integration.
-
-| Task | Description | Status |
-|------|-------------|--------|
-| A.1 | Add `/api/ml/inventory` endpoint | Pending |
-| A.2 | Add `/api/ml/training-data` streaming endpoint | Pending |
-| A.3 | Add `/api/ml/profile-coverage` endpoint | Pending |
-| A.4 | Document profile-to-metrics mapping | Pending |
-
-**Endpoints**:
 ```
-GET /api/ml/inventory
-    Returns: Available metrics, resources, time ranges
-
-GET /api/ml/training-data?profile=collector&start=7d&end=now
-    Returns: Streaming training data in format Precursor expects
-
-GET /api/ml/profile-coverage?profile=collector
-    Returns: Coverage statistics for requested profile
+LogicMonitor Collectors (OTLP)
+    -> POST /api/HttpIngest
+    -> Memory buffer (flush every 60s or 10,000 rows)
+    -> Azure Data Lake Gen2 (Parquet, year/month/day/hour partitions)
+    -> Azure Synapse Serverless SQL (query engine)
+    -> /api/ml/* endpoints
+    -> Precursor (predictive-insights) ML training
 ```
 
-### Phase B: Data Quality
+## Completed Phases
 
-**Goal**: Ensure data quality for ML training.
-
-| Task | Description | Status |
-|------|-------------|--------|
-| B.1 | Add `/api/ml/quality` endpoint | Pending |
-| B.2 | Implement gap detection | Pending |
-| B.3 | Add data freshness metrics | Pending |
-| B.4 | Table partitioning for large datasets | Pending |
-
-### Phase C: Integration Testing
-
-**Goal**: Validate end-to-end integration with Precursor.
+### Phase A: Core ML Endpoints (v15)
 
 | Task | Description | Status |
 |------|-------------|--------|
-| C.1 | Local integration tests | Pending |
-| C.2 | Production data testing (56M+ rows) | Pending |
-| C.3 | Performance benchmarking | Pending |
-| C.4 | Documentation completion | Pending |
+| A.1 | `/api/ml/inventory` endpoint | Done |
+| A.2 | `/api/ml/training-data` endpoint | Done |
+| A.3 | `/api/ml/profile-coverage` endpoint | Done (PostgreSQL-only) |
+| A.4 | `/api/ml/profiles` endpoint | Done |
+| A.5 | Feature profile definitions (6 profiles) | Done |
+
+### Phase B: Data Quality (partial)
+
+| Task | Description | Status |
+|------|-------------|--------|
+| B.1 | `/api/ml/quality` endpoint | Done (PostgreSQL-only) |
+| B.2 | Gap detection | Not started |
+| B.3 | Data freshness metrics | Not started |
+| B.4 | Table partitioning | Done (Parquet time-partitioned) |
+
+### Data Lake Migration (v32)
+
+| Task | Description | Status |
+|------|-------------|--------|
+| D.1 | Data Lake Gen2 writer | Done |
+| D.2 | Synapse Serverless SQL client | Done |
+| D.3 | Ingestion router (dual-write support) | Done |
+| D.4 | Hot cache guards on export endpoints | Done |
+
+### Metrics and Health (v49)
+
+| Task | Description | Status |
+|------|-------------|--------|
+| M.1 | In-memory Prometheus /metrics | Done |
+| M.2 | Root /health for container probes | Done |
+| M.3 | Export endpoint hot cache guards | Done |
+| M.4 | ML feature profile alignment with Data Lake names | Done |
+
+## Open Work
+
+| Task | Description | Priority |
+|------|-------------|----------|
+| O.1 | Migrate /api/ml/profile-coverage to Synapse | Medium |
+| O.2 | Migrate /api/ml/quality to Synapse | Medium |
+| O.3 | Add partition pruning to /api/ml/inventory | Medium |
+| O.4 | GitHub Actions CI/CD pipeline | Low |
+| O.5 | Write tests for current architecture | High |
 
 ## Ecosystem Integration
 
-HttpIngest integrates with:
-
 | Project | Role | Integration Point |
 |---------|------|-------------------|
-| **Precursor** | ML Training | PostgreSQL queries, ML API endpoints |
+| **Precursor** | ML Training | Synapse queries via /api/ml/* endpoints |
 | **quantum_mcp** | Quantum Optimization | No direct integration (via Precursor) |
-
-See [ecosystem-integration.md](./ecosystem-integration.md) for full details.
-
-## Feature Profiles
-
-HttpIngest should support these Precursor feature profiles:
-
-| Profile | Target Metrics | Use Case |
-|---------|---------------|----------|
-| `collector` | ExecuteTime, ThreadCount, CpuUsage, SuccessRate | LM Collector monitoring |
-| `kubernetes` | cpuUsageNanoCores, memoryUsageBytes | Container workloads |
-| `cloud_compute` | cpuUtilization, memoryUtilization | AWS/Azure VMs |
-| `network` | ifInOctets, ifOutOctets | SNMP devices |
-| `database` | activeConnections, queryExecutionTime | SQL/NoSQL servers |
-| `application` | requestRate, errorRate, responseTime | APM metrics |
 
 ## Dependencies
 
-- PostgreSQL schema must include: metric_data, resources, metric_definitions
-- Precursor DataFetcher expects specific JSONB attribute structure
-- Managed identity for Azure PostgreSQL authentication
-
-## Related Documentation
-
-- [ecosystem-integration.md](./ecosystem-integration.md) - Full ecosystem overview
-- [api-documentation.md](./api-documentation.md) - API reference
-- [migrations.md](./migrations.md) - Database schema changes
+- Azure Data Lake Gen2 for Parquet storage
+- Azure Synapse Serverless SQL for queries (~$5/TB scanned)
+- ODBC Driver 18 for Synapse connectivity
+- Azure managed identity for authentication
+- PostgreSQL only needed if dashboarding is enabled
 
 ## Version History
 
 | Version | Changes |
 |---------|---------|
-| v14 | Cleanup, removed dead code, normalized schema migrations |
-| v15 (planned) | ML endpoints Phase A |
+| v14 | Cleanup, normalized schema migrations |
+| v15 | ML endpoints Phase A |
+| v32 | Data Lake migration, Synapse integration |
+| v48 | ML profile alignment, lmotel tracing |
+| v49 | In-memory metrics, /health endpoint, export guards |

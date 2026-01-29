@@ -48,7 +48,7 @@ from src.otlp_parser import parse_otlp
 from src.data_processor_async import AsyncDataProcessor
 from src.ml_service import MLDataService, FEATURE_PROFILES
 
-# Import new Data Lake components
+# Import Data Lake components
 from src.datalake_writer import DataLakeWriter, DataLakeConfig
 from src.hot_cache_manager import HotCacheManager
 from src.ingestion_router import IngestionRouter, IngestionConfig

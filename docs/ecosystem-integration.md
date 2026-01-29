@@ -82,7 +82,7 @@ HttpIngest serves as the **data ingestion and ML query layer** for the ecosystem
   - Cost-effective long-term storage
   - Columnar format optimized for analytics
   - Time-partitioned for efficient scans
-- **Optional**: PostgreSQL hot cache (disabled by default)
+- **Optional**: PostgreSQL hot cache (dormant, for dashboarding if/when needed)
   - For real-time dashboard queries
   - 48-hour retention window
 
@@ -242,7 +242,7 @@ SYNAPSE_DATABASE=master
 
 | HttpIngest | Precursor | quantum_mcp | Notes |
 |------------|-----------|-------------|-------|
-| v32+ | Phase 9+ | Phase 3+ | Data Lake architecture with ML endpoints |
+| v49+ | Phase 9+ | Phase 3+ | Data Lake + Synapse query engine, ML endpoints |
 
 ## Contact
 
