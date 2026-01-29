@@ -97,7 +97,7 @@ class LoggingSpanExporter(SpanExporter):
         return self._wrapped.force_flush(timeout_millis)
 
 # Version should match pyproject.toml
-SERVICE_VERSION_VALUE = "48.0.0"
+SERVICE_VERSION_VALUE = "49.0.0"
 
 
 def get_tracing_config() -> dict:

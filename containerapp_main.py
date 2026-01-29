@@ -77,6 +77,17 @@ synapse_client: Optional[SynapseClient] = None
 background_tasks: Dict[str, asyncio.Task] = {}
 shutdown_event = asyncio.Event()
 
+# In-memory metrics counters for /metrics endpoint (no database dependency)
+ingestion_metrics: Dict[str, Any] = {
+    "requests_total": 0,
+    "requests_success": 0,
+    "requests_error": 0,
+    "metrics_ingested": 0,
+    "datalake_flushes": 0,
+    "datalake_records_written": 0,
+    "started_at": datetime.now().isoformat(),
+}
+
 # Feature flags
 HOT_CACHE_ENABLED = os.getenv("HOT_CACHE_ENABLED", "false").lower() == "true"
 SYNAPSE_ENABLED = os.getenv("SYNAPSE_ENABLED", "true").lower() == "true"
@@ -262,7 +273,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="LogicMonitor Data Pipeline",
     description="Unified data pipeline for LogicMonitor metrics",
-    version="48.0.0",
+    version="49.0.0",
     lifespan=lifespan
 )
 
@@ -289,6 +300,8 @@ async def datalake_flush_loop():
                 stats = datalake_writer.get_buffer_stats()
                 if stats["metric_data_buffered"] > 0:
                     written = await datalake_writer.flush()
+                    ingestion_metrics["datalake_flushes"] += 1
+                    ingestion_metrics["datalake_records_written"] += written
                     logger.info(f"Data Lake flush: {written} records written")
 
         except Exception as e:
@@ -419,6 +432,16 @@ async def token_refresh_loop():
 # ============================================================================
 # HEALTH & INGESTION ENDPOINTS
 # ============================================================================
+
+@app.get("/health")
+async def health_root():
+    """Root health check for Azure Container Apps probes."""
+    return JSONResponse(content={
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "version": app.version,
+    })
+
 
 @app.get("/api/health")
 async def health_check():
@@ -560,10 +583,12 @@ async def http_ingest(request: Request):
             )
 
         # Route to Data Lake and optionally hot cache
+        ingestion_metrics["requests_total"] += 1
         stats = await ingestion_router.ingest(payload)
 
         # Check for errors
         if stats.errors and stats.datalake_written == 0 and stats.hot_cache_written == 0:
+            ingestion_metrics["requests_error"] += 1
             return JSONResponse(
                 content={
                     "status": "error",
@@ -572,6 +597,9 @@ async def http_ingest(request: Request):
                 },
                 status_code=500
             )
+
+        ingestion_metrics["requests_success"] += 1
+        ingestion_metrics["metrics_ingested"] += stats.datalake_written
 
         return JSONResponse(
             content={
@@ -583,6 +611,8 @@ async def http_ingest(request: Request):
         )
 
     except Exception as e:
+        ingestion_metrics["requests_total"] += 1
+        ingestion_metrics["requests_error"] += 1
         logger.error(f"Ingestion error: {e}", exc_info=True)
         return JSONResponse(
             content={"error": str(e)},
@@ -599,24 +629,47 @@ async def http_ingest(request: Request):
 
 @app.get("/metrics")
 async def prometheus_metrics():
-    """Prometheus metrics endpoint."""
-    try:
-        exporter = PrometheusExporter(get_db_connection_string())
-        query = TimeSeriesQuery(
-            start_time=datetime.now() - timedelta(hours=1),
-            end_time=datetime.now(),
-            limit=1000
-        )
-        metrics_text = exporter.export_metrics(query)
-        return Response(content=metrics_text, media_type="text/plain; version=0.0.4")
-    except Exception as e:
-        logger.error(f"Prometheus export error: {e}")
-        return Response(content=f"# Error: {str(e)}\n", media_type="text/plain", status_code=500)
+    """Prometheus metrics endpoint using in-memory counters."""
+    buffer_stats = datalake_writer.get_buffer_stats() if datalake_writer else {}
+
+    lines = [
+        "# HELP httpingest_requests_total Total HTTP ingest requests received",
+        "# TYPE httpingest_requests_total counter",
+        f'httpingest_requests_total {ingestion_metrics["requests_total"]}',
+        "# HELP httpingest_requests_success_total Successful ingest requests",
+        "# TYPE httpingest_requests_success_total counter",
+        f'httpingest_requests_success_total {ingestion_metrics["requests_success"]}',
+        "# HELP httpingest_requests_error_total Failed ingest requests",
+        "# TYPE httpingest_requests_error_total counter",
+        f'httpingest_requests_error_total {ingestion_metrics["requests_error"]}',
+        "# HELP httpingest_metrics_ingested_total Total individual metrics ingested",
+        "# TYPE httpingest_metrics_ingested_total counter",
+        f'httpingest_metrics_ingested_total {ingestion_metrics["metrics_ingested"]}',
+        "# HELP httpingest_datalake_flushes_total Data Lake flush operations",
+        "# TYPE httpingest_datalake_flushes_total counter",
+        f'httpingest_datalake_flushes_total {ingestion_metrics["datalake_flushes"]}',
+        "# HELP httpingest_datalake_records_written_total Records written to Data Lake",
+        "# TYPE httpingest_datalake_records_written_total counter",
+        f'httpingest_datalake_records_written_total {ingestion_metrics["datalake_records_written"]}',
+        "# HELP httpingest_datalake_buffer_size Current Data Lake buffer size",
+        "# TYPE httpingest_datalake_buffer_size gauge",
+        f'httpingest_datalake_buffer_size {buffer_stats.get("metric_data_buffered", 0)}',
+        "# HELP httpingest_info Application info",
+        "# TYPE httpingest_info gauge",
+        f'httpingest_info{{version="{app.version}",mode="{"datalake_only" if not HOT_CACHE_ENABLED else "datalake_with_hot_cache"}"}} 1',
+        "",
+    ]
+    return Response(content="\n".join(lines), media_type="text/plain; version=0.0.4")
 
 
 @app.get("/grafana/search")
 async def grafana_search(request: Request):
-    """Grafana SimpleJSON search endpoint."""
+    """Grafana SimpleJSON search endpoint. Requires hot cache (PostgreSQL)."""
+    if not HOT_CACHE_ENABLED or not db_pool:
+        return JSONResponse(
+            content={"error": "Grafana integration requires hot cache (PostgreSQL). Currently in Data Lake only mode."},
+            status_code=503
+        )
     try:
         datasource = GrafanaSimpleJSONDataSource(get_db_connection_string())
         result = datasource.search()
@@ -628,7 +681,12 @@ async def grafana_search(request: Request):
 
 @app.post("/grafana/query")
 async def grafana_query(request: Request):
-    """Grafana SimpleJSON query endpoint."""
+    """Grafana SimpleJSON query endpoint. Requires hot cache (PostgreSQL)."""
+    if not HOT_CACHE_ENABLED or not db_pool:
+        return JSONResponse(
+            content={"error": "Grafana integration requires hot cache (PostgreSQL). Currently in Data Lake only mode."},
+            status_code=503
+        )
     try:
         datasource = GrafanaSimpleJSONDataSource(get_db_connection_string())
         body = await request.json()
@@ -644,7 +702,12 @@ async def powerbi_export(
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None)
 ):
-    """Export data in PowerBI-compatible format."""
+    """Export data in PowerBI-compatible format. Requires hot cache (PostgreSQL)."""
+    if not HOT_CACHE_ENABLED or not db_pool:
+        return JSONResponse(
+            content={"error": "PowerBI export requires hot cache (PostgreSQL). Currently in Data Lake only mode."},
+            status_code=503
+        )
     try:
         exporter = PowerBIExporter(get_db_connection_string())
         query = TimeSeriesQuery(
@@ -663,7 +726,12 @@ async def csv_export(
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None)
 ):
-    """Export data as CSV."""
+    """Export data as CSV. Requires hot cache (PostgreSQL)."""
+    if not HOT_CACHE_ENABLED or not db_pool:
+        return Response(
+            content="CSV export requires hot cache (PostgreSQL). Currently in Data Lake only mode.",
+            media_type="text/plain", status_code=503
+        )
     try:
         exporter = CSVJSONExporter(get_db_connection_string())
         query = TimeSeriesQuery(
@@ -687,7 +755,12 @@ async def json_export(
     start_time: Optional[str] = Query(None),
     end_time: Optional[str] = Query(None)
 ):
-    """Export data as JSON."""
+    """Export data as JSON. Requires hot cache (PostgreSQL)."""
+    if not HOT_CACHE_ENABLED or not db_pool:
+        return JSONResponse(
+            content={"error": "JSON export requires hot cache (PostgreSQL). Currently in Data Lake only mode."},
+            status_code=503
+        )
     try:
         exporter = CSVJSONExporter(get_db_connection_string())
         query = TimeSeriesQuery(
