@@ -387,7 +387,11 @@ class MLDataService:
             return False
         if start_time is None:
             return False
-        return start_time < self._get_hot_cache_cutoff()
+        # Ensure timezone-aware comparison (start_time may be naive from URL params)
+        cutoff = self._get_hot_cache_cutoff()
+        if start_time.tzinfo is None:
+            start_time = start_time.replace(tzinfo=timezone.utc)
+        return start_time < cutoff
 
     async def get_inventory(
         self,

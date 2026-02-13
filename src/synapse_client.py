@@ -81,57 +81,73 @@ class SynapseClient:
         self.config = config
         self._connection: Optional[pyodbc.Connection] = None
 
-    def _get_connection(self) -> pyodbc.Connection:
-        """Get or create a Synapse connection using Azure AD auth."""
-        if self._connection is None or self._connection.closed:
-            # Determine authentication method based on environment
-            use_managed_identity = os.getenv("USE_MANAGED_IDENTITY", "false").lower() == "true"
+    def _get_connection(self, force_reconnect: bool = False) -> pyodbc.Connection:
+        """Get or create a Synapse connection using Azure AD auth.
 
-            if use_managed_identity:
-                # In Azure Container Apps, use managed identity
-                conn_str = (
-                    f"DRIVER={{ODBC Driver 18 for SQL Server}};"
-                    f"SERVER={self.config.server};"
-                    f"DATABASE={self.config.database};"
-                    f"Authentication=ActiveDirectoryMsi;"
-                    f"Encrypt=yes;"
-                    f"TrustServerCertificate=no;"
-                )
-            else:
-                # Locally, use Azure CLI credentials via access token
-                from azure.identity import DefaultAzureCredential
-                credential = DefaultAzureCredential()
-                token = credential.get_token("https://database.windows.net/.default")
-                conn_str = (
-                    f"DRIVER={{ODBC Driver 18 for SQL Server}};"
-                    f"SERVER={self.config.server};"
-                    f"DATABASE={self.config.database};"
-                    f"Encrypt=yes;"
-                    f"TrustServerCertificate=no;"
-                )
-                # Pass token via SQL_COPT_SS_ACCESS_TOKEN
-                # pyodbc requires token as bytes
-                import struct
-                token_bytes = token.token.encode("utf-16-le")
-                token_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
-
+        Synapse Serverless drops idle connections after ~5 minutes. The pyodbc
+        'closed' property does not detect dead TCP connections, so we validate
+        the cached connection with a lightweight query before returning it.
+        On failure (or when force_reconnect=True), we create a fresh connection.
+        """
+        if not force_reconnect and self._connection is not None and not self._connection.closed:
+            # Validate the cached connection is still alive
+            try:
+                cursor = self._connection.cursor()
+                cursor.execute("SELECT 1")
+                cursor.fetchone()
+                cursor.close()
+                return self._connection
+            except pyodbc.Error:
+                logger.warning("Cached Synapse connection is stale, reconnecting")
                 try:
-                    self._connection = pyodbc.connect(
-                        conn_str,
-                        timeout=30,
-                        attrs_before={1256: token_struct}  # SQL_COPT_SS_ACCESS_TOKEN
-                    )
-                    logger.info(f"Connected to Synapse with token: {self.config.server}")
-                    return self._connection
-                except pyodbc.Error as e:
-                    logger.error(f"Failed to connect to Synapse with token: {e}")
-                    raise
+                    self._connection.close()
+                except Exception:
+                    pass
+                self._connection = None
 
+        # Create a fresh connection
+        use_managed_identity = os.getenv("USE_MANAGED_IDENTITY", "false").lower() == "true"
+
+        if use_managed_identity:
+            conn_str = (
+                f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+                f"SERVER={self.config.server};"
+                f"DATABASE={self.config.database};"
+                f"Authentication=ActiveDirectoryMsi;"
+                f"Encrypt=yes;"
+                f"TrustServerCertificate=no;"
+            )
             try:
                 self._connection = pyodbc.connect(conn_str, timeout=30)
                 logger.info(f"Connected to Synapse: {self.config.server}")
             except pyodbc.Error as e:
                 logger.error(f"Failed to connect to Synapse: {e}")
+                raise
+        else:
+            from azure.identity import DefaultAzureCredential
+            import struct
+
+            credential = DefaultAzureCredential()
+            token = credential.get_token("https://database.windows.net/.default")
+            conn_str = (
+                f"DRIVER={{ODBC Driver 18 for SQL Server}};"
+                f"SERVER={self.config.server};"
+                f"DATABASE={self.config.database};"
+                f"Encrypt=yes;"
+                f"TrustServerCertificate=no;"
+            )
+            token_bytes = token.token.encode("utf-16-le")
+            token_struct = struct.pack(f"<I{len(token_bytes)}s", len(token_bytes), token_bytes)
+
+            try:
+                self._connection = pyodbc.connect(
+                    conn_str,
+                    timeout=30,
+                    attrs_before={1256: token_struct}  # SQL_COPT_SS_ACCESS_TOKEN
+                )
+                logger.info(f"Connected to Synapse with token: {self.config.server}")
+            except pyodbc.Error as e:
+                logger.error(f"Failed to connect to Synapse with token: {e}")
                 raise
 
         return self._connection
@@ -165,6 +181,21 @@ class SynapseClient:
         Returns:
             Dict with data rows and metadata
         """
+        return await self._execute_training_query(
+            start_time, end_time, metric_names, resource_hash, limit, offset
+        )
+
+    async def _execute_training_query(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        metric_names: Optional[List[str]],
+        resource_hash: Optional[str],
+        limit: int,
+        offset: int,
+        _retried: bool = False,
+    ) -> Dict[str, Any]:
+        """Execute training data query with one retry on stale connections."""
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -304,10 +335,18 @@ class SynapseClient:
             }
 
         except pyodbc.Error as e:
+            # Retry once with a fresh connection on communication link failures
+            if not _retried and "08S01" in str(e):
+                logger.warning(f"Synapse connection lost, retrying with fresh connection: {e}")
+                self._connection = None
+                return await self._execute_training_query(
+                    start_time, end_time, metric_names, resource_hash,
+                    limit, offset, _retried=True,
+                )
             logger.error(f"Synapse query error: {e}")
             raise
 
-    async def get_inventory(self) -> Dict[str, Any]:
+    async def get_inventory(self, _retried: bool = False) -> Dict[str, Any]:
         """
         Get inventory of data available in Data Lake.
 
@@ -380,6 +419,10 @@ class SynapseClient:
             }
 
         except pyodbc.Error as e:
+            if not _retried and "08S01" in str(e):
+                logger.warning(f"Synapse connection lost during inventory, retrying: {e}")
+                self._connection = None
+                return await self.get_inventory(_retried=True)
             logger.error(f"Synapse inventory query error: {e}")
             raise
 
