@@ -76,5 +76,5 @@
 - Data Lake account: stlmingestdatalake
 - Synapse server: syn-lm-analytics-ondemand.sql.azuresynapse.net (enabled, query layer for Precursor)
 - Replicas: 1-5 (auto-scaling on HTTP concurrency)
-- Precursor project: /Users/ryan.matuszewski/dev/repositories/ai/predictive-insights
+- Precursor project: ~/dev/richard/precursor
 - /api/ml/inventory may timeout on Synapse (full-table scan, no partition pruning)

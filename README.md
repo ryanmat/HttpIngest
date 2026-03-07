@@ -26,7 +26,7 @@ HttpIngest is the data layer of a three-tier ML ecosystem for predictive monitor
 +-------------------------------------------------------------------------+
 |                          ML LAYER                                       |
 |                                                                         |
-|   Precursor (predictive-insights)                                       |
+|   Precursor (precursor)                                       |
 |   - Feature engineering (windowing, normalization)                      |
 |   - X-DEC Model (BiGRU-XVAE-DEC clustering)                            |
 |   - Prediction API                                                      |

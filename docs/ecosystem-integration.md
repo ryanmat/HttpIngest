@@ -44,13 +44,13 @@ This document describes how HttpIngest integrates with the broader LogicMonitor 
 +-------------------------------------------------------------------------+
 |                          ML LAYER                                        |
 |                                                                          |
-|   Precursor (predictive-insights)                                        |
+|   Precursor (precursor)                                        |
 |   - Feature Engineering (windowing, normalization)                       |
 |   - X-DEC Model (BiGRU-XVAE-DEC clustering)                             |
 |   - Prediction API (/predict/lookup)                                     |
 |   - Profiles: kubernetes | collector | cloud_compute | network | ...    |
 |                                                                          |
-|   Location: /Users/ryan.matuszewski/dev/repositories/ai/predictive-insights
+|   Location: ~/dev/richard/precursor
 +-------------------------------------------------------------------------+
                                     |
                                     v (Phase 14+)
@@ -63,7 +63,7 @@ This document describes how HttpIngest integrates with the broader LogicMonitor 
 |   - Quantum kernels (enhanced clustering)                                |
 |   - Multi-agent orchestration                                            |
 |                                                                          |
-|   Location: /Users/ryan.matuszewski/dev/repositories/ai/quantum_mcp      |
+|   Location: ~/dev/richard/quantum_mcp      |
 +-------------------------------------------------------------------------+
 ```
 
@@ -247,5 +247,5 @@ SYNAPSE_DATABASE=master
 ## Contact
 
 - **HttpIngest**: This repository
-- **Precursor**: /Users/ryan.matuszewski/dev/repositories/ai/predictive-insights
-- **quantum_mcp**: /Users/ryan.matuszewski/dev/repositories/ai/quantum_mcp
+- **Precursor**: ~/dev/richard/precursor
+- **quantum_mcp**: ~/dev/richard/quantum_mcp

@@ -1,9 +1,9 @@
 # Description: Integration notes for Precursor ML project.
-# Description: Reference when working on predictive-insights.
+# Description: Reference when working on precursor.
 
 # Precursor Integration Notes
 
-These notes should be applied when working on the Precursor (predictive-insights) project.
+These notes should be applied when working on the Precursor (precursor) project.
 
 ## Data Source Changes (HttpIngest v32+)
 

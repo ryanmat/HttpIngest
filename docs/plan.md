@@ -25,7 +25,7 @@ LogicMonitor Collectors (OTLP)
     -> Azure Data Lake Gen2 (Parquet, year/month/day/hour partitions)
     -> Azure Synapse Serverless SQL (query engine)
     -> /api/ml/* endpoints
-    -> Precursor (predictive-insights) ML training
+    -> Precursor (precursor) ML training
 ```
 
 ## Completed Phases
