@@ -32,8 +32,11 @@ logging.basicConfig(
 import asyncpg
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from fastapi import FastAPI, Query, Response, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, Request
 from fastapi.responses import StreamingResponse, JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from azure.identity.aio import DefaultAzureCredential
 
 # Import our components
@@ -67,6 +70,25 @@ except ImportError:
     SYNAPSE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+async def verify_ml_api_key(x_api_key: str = Header(None, alias="X-API-Key")) -> str:
+    """Validate API key for ML endpoints. Returns the key if valid.
+
+    When ML_API_KEY env var is not set, all requests pass (backward compatible).
+    When set, requests must include a matching X-API-Key header.
+    """
+    ml_api_key = os.getenv("ML_API_KEY", "")
+    if not ml_api_key:
+        return ""
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="Missing X-API-Key header")
+    if x_api_key != ml_api_key:
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    return x_api_key
+
+
+# Rate limiting for ML endpoints
+limiter = Limiter(key_func=get_remote_address)
 
 # Global state
 db_pool: Optional[asyncpg.Pool] = None
@@ -276,6 +298,10 @@ app = FastAPI(
     version="49.0.0",
     lifespan=lifespan
 )
+
+# Rate limiting state (must be set before routes are registered)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Initialize tracing IMMEDIATELY after app creation (before routes are registered)
 # This ensures FastAPI middleware is properly instrumented
@@ -780,9 +806,12 @@ async def json_export(
 
 
 @app.get("/api/ml/inventory")
+@limiter.limit("10/minute")
 async def ml_inventory(
+    request: Request,
     datasource: Optional[str] = Query(None, description="Filter by datasource name"),
     resource_type: Optional[str] = Query(None, description="Filter by resource type"),
+    _api_key: str = Depends(verify_ml_api_key),
 ):
     """
     Get inventory of available metrics, resources, and time ranges.
@@ -813,13 +842,16 @@ async def ml_inventory(
 
 
 @app.get("/api/ml/training-data")
+@limiter.limit("10/minute")
 async def ml_training_data(
+    request: Request,
     start_time: Optional[str] = Query(None, description="Start time (ISO 8601)"),
     end_time: Optional[str] = Query(None, description="End time (ISO 8601)"),
     profile: Optional[str] = Query(None, description="Feature profile filter"),
     resource_id: Optional[int] = Query(None, description="Resource ID filter"),
     limit: int = Query(10000, description="Maximum records to return", le=100000),
     offset: int = Query(0, description="Pagination offset"),
+    _api_key: str = Depends(verify_ml_api_key),
 ):
     """
     Get training data in Precursor-compatible format.
@@ -869,8 +901,11 @@ async def ml_training_data(
 
 
 @app.get("/api/ml/profile-coverage")
+@limiter.limit("10/minute")
 async def ml_profile_coverage(
+    request: Request,
     profile: Optional[str] = Query(None, description="Single profile to check"),
+    _api_key: str = Depends(verify_ml_api_key),
 ):
     """
     Check coverage of available metrics against feature profiles.
@@ -909,7 +944,11 @@ async def ml_profile_coverage(
 
 
 @app.get("/api/ml/profiles")
-async def ml_profiles():
+@limiter.limit("10/minute")
+async def ml_profiles(
+    request: Request,
+    _api_key: str = Depends(verify_ml_api_key),
+):
     """
     List available feature profiles and their expected metrics.
 
@@ -929,9 +968,12 @@ async def ml_profiles():
 
 
 @app.get("/api/ml/quality")
+@limiter.limit("10/minute")
 async def ml_quality(
+    request: Request,
     profile: Optional[str] = Query(None, description="Filter by profile name"),
     hours: int = Query(24, ge=1, le=168, description="Lookback period in hours"),
+    _api_key: str = Depends(verify_ml_api_key),
 ):
     """
     Assess data quality for ML training readiness.
