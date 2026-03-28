@@ -18,6 +18,7 @@ Data Sources:
 import logging
 import math
 import os
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any, TYPE_CHECKING
 from dataclasses import dataclass
@@ -30,6 +31,14 @@ logger = logging.getLogger(__name__)
 
 # Hot cache retention period (queries within this window use PostgreSQL)
 HOT_CACHE_HOURS = int(os.getenv("HOT_CACHE_RETENTION_HOURS", "48"))
+
+# ML API call metrics (exposed via /metrics Prometheus endpoint)
+ml_api_metrics: Dict[str, Any] = {
+    "requests_total": 0,
+    "query_duration_seconds_total": 0.0,
+    "rows_returned_total": 0,
+    "errors_total": 0,
+}
 
 
 # Feature profiles matching Precursor's config/features.yaml (single source of truth).
@@ -404,6 +413,22 @@ class MLDataService:
         Combines data from both hot cache (PostgreSQL) and Data Lake (Synapse)
         if both are available.
         """
+        ml_api_metrics["requests_total"] += 1
+        start_ts = time.monotonic()
+        try:
+            return await self._get_inventory_impl(datasource, resource_type)
+        except Exception:
+            ml_api_metrics["errors_total"] += 1
+            raise
+        finally:
+            ml_api_metrics["query_duration_seconds_total"] += time.monotonic() - start_ts
+
+    async def _get_inventory_impl(
+        self,
+        datasource: Optional[str] = None,
+        resource_type: Optional[str] = None,
+    ) -> InventoryResponse:
+        """Internal implementation of get_inventory."""
         # If no hot cache, try Synapse only
         if not self.pool:
             if self.synapse_client:
@@ -516,6 +541,30 @@ class MLDataService:
         - PostgreSQL hot cache: If start_time is within HOT_CACHE_HOURS
         - Synapse Data Lake: If start_time is older (historical data)
         """
+        ml_api_metrics["requests_total"] += 1
+        start_ts = time.monotonic()
+        try:
+            result = await self._get_training_data_impl(
+                start_time, end_time, profile, resource_id, limit, offset,
+            )
+            ml_api_metrics["rows_returned_total"] += len(result.get("data", []))
+            return result
+        except Exception:
+            ml_api_metrics["errors_total"] += 1
+            raise
+        finally:
+            ml_api_metrics["query_duration_seconds_total"] += time.monotonic() - start_ts
+
+    async def _get_training_data_impl(
+        self,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        profile: Optional[str] = None,
+        resource_id: Optional[int] = None,
+        limit: int = 10000,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """Internal implementation of get_training_data."""
         if start_time is None:
             start_time = datetime.now(timezone.utc) - timedelta(days=7)
         if end_time is None:
@@ -708,6 +757,21 @@ class MLDataService:
         profile: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Check coverage of available metrics against feature profiles."""
+        ml_api_metrics["requests_total"] += 1
+        start_ts = time.monotonic()
+        try:
+            return await self._get_profile_coverage_impl(profile)
+        except Exception:
+            ml_api_metrics["errors_total"] += 1
+            raise
+        finally:
+            ml_api_metrics["query_duration_seconds_total"] += time.monotonic() - start_ts
+
+    async def _get_profile_coverage_impl(
+        self,
+        profile: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Internal implementation of get_profile_coverage."""
         if not self.pool:
             return {
                 "profiles": [],
@@ -768,6 +832,22 @@ class MLDataService:
 
         Note: This endpoint requires PostgreSQL hot cache for real-time quality checks.
         """
+        ml_api_metrics["requests_total"] += 1
+        start_ts = time.monotonic()
+        try:
+            return await self._get_data_quality_impl(profile, hours)
+        except Exception:
+            ml_api_metrics["errors_total"] += 1
+            raise
+        finally:
+            ml_api_metrics["query_duration_seconds_total"] += time.monotonic() - start_ts
+
+    async def _get_data_quality_impl(
+        self,
+        profile: Optional[str] = None,
+        hours: int = 24,
+    ) -> Dict[str, Any]:
+        """Internal implementation of get_data_quality."""
         if not self.pool:
             return {
                 "summary": {

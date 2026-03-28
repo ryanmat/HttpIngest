@@ -88,7 +88,7 @@ async def test_http_ingest_async(async_client):
     if response.status_code == 200:
         data = response.json()
         assert data["status"] == "success"
-        assert "id" in data
+        assert "stats" in data
         assert "timestamp" in data
 
 

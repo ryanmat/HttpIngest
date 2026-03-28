@@ -37,6 +37,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+from starlette.middleware.gzip import GZipMiddleware
 from azure.identity.aio import DefaultAzureCredential
 
 # Import our components
@@ -49,7 +50,7 @@ from src.exporters import (
 )
 from src.otlp_parser import parse_otlp
 from src.data_processor_async import AsyncDataProcessor
-from src.ml_service import MLDataService, FEATURE_PROFILES
+from src.ml_service import MLDataService, FEATURE_PROFILES, ml_api_metrics
 
 # Import Data Lake components
 from src.datalake_writer import DataLakeWriter, DataLakeConfig
@@ -302,6 +303,9 @@ app = FastAPI(
 # Rate limiting state (must be set before routes are registered)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Response compression for large ML API payloads (500MB+ uncompressed possible)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Initialize tracing IMMEDIATELY after app creation (before routes are registered)
 # This ensures FastAPI middleware is properly instrumented
@@ -683,6 +687,18 @@ async def prometheus_metrics():
         "# HELP httpingest_info Application info",
         "# TYPE httpingest_info gauge",
         f'httpingest_info{{version="{app.version}",mode="{"datalake_only" if not HOT_CACHE_ENABLED else "datalake_with_hot_cache"}"}} 1',
+        "# HELP httpingest_ml_requests_total Total ML API requests",
+        "# TYPE httpingest_ml_requests_total counter",
+        f'httpingest_ml_requests_total {ml_api_metrics["requests_total"]}',
+        "# HELP httpingest_ml_query_duration_seconds_total Cumulative ML query execution time",
+        "# TYPE httpingest_ml_query_duration_seconds_total counter",
+        f'httpingest_ml_query_duration_seconds_total {ml_api_metrics["query_duration_seconds_total"]:.4f}',
+        "# HELP httpingest_ml_rows_returned_total Total rows returned by ML queries",
+        "# TYPE httpingest_ml_rows_returned_total counter",
+        f'httpingest_ml_rows_returned_total {ml_api_metrics["rows_returned_total"]}',
+        "# HELP httpingest_ml_errors_total Total ML API errors",
+        "# TYPE httpingest_ml_errors_total counter",
+        f'httpingest_ml_errors_total {ml_api_metrics["errors_total"]}',
         "",
     ]
     return Response(content="\n".join(lines), media_type="text/plain; version=0.0.4")

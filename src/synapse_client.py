@@ -16,8 +16,34 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import pyodbc
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 logger = logging.getLogger(__name__)
+
+# Query execution timeout in seconds. Synapse Serverless has unpredictable
+# cold starts (30s to 2+ min) and complex queries can run long. 5 minutes
+# prevents indefinite hangs while allowing cold-start + large scans.
+QUERY_TIMEOUT_SECONDS = 300
+
+
+def _is_transient_synapse_error(exc: BaseException) -> bool:
+    """Check if a pyodbc error is transient and worth retrying.
+
+    Transient ODBC error codes:
+      08S01 - Communication link failure (connection dropped mid-query)
+      HYT00 - Timeout expired (query execution exceeded QUERY_TIMEOUT_SECONDS)
+      HYT01 - Connection timeout expired
+    """
+    if not isinstance(exc, pyodbc.Error):
+        return False
+    error_str = str(exc)
+    return any(code in error_str for code in ("08S01", "HYT00", "HYT01"))
 
 
 class SynapseConfig:
@@ -119,6 +145,7 @@ class SynapseClient:
             )
             try:
                 self._connection = pyodbc.connect(conn_str, timeout=30)
+                self._connection.timeout = QUERY_TIMEOUT_SECONDS
                 logger.info(f"Connected to Synapse: {self.config.server}")
             except pyodbc.Error as e:
                 logger.error(f"Failed to connect to Synapse: {e}")
@@ -145,6 +172,7 @@ class SynapseClient:
                     timeout=30,
                     attrs_before={1256: token_struct}  # SQL_COPT_SS_ACCESS_TOKEN
                 )
+                self._connection.timeout = QUERY_TIMEOUT_SECONDS
                 logger.info(f"Connected to Synapse with token: {self.config.server}")
             except pyodbc.Error as e:
                 logger.error(f"Failed to connect to Synapse with token: {e}")
@@ -185,6 +213,13 @@ class SynapseClient:
             start_time, end_time, metric_names, resource_hash, limit, offset
         )
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        retry=retry_if_exception(_is_transient_synapse_error),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
     async def _execute_training_query(
         self,
         start_time: datetime,
@@ -193,9 +228,8 @@ class SynapseClient:
         resource_hash: Optional[str],
         limit: int,
         offset: int,
-        _retried: bool = False,
     ) -> Dict[str, Any]:
-        """Execute training data query with one retry on stale connections."""
+        """Execute training data query with exponential backoff on transient errors."""
         conn = self._get_connection()
         cursor = conn.cursor()
 
@@ -335,18 +369,21 @@ class SynapseClient:
             }
 
         except pyodbc.Error as e:
-            # Retry once with a fresh connection on communication link failures
-            if not _retried and "08S01" in str(e):
-                logger.warning(f"Synapse connection lost, retrying with fresh connection: {e}")
+            if _is_transient_synapse_error(e):
+                logger.warning(f"Transient Synapse error, resetting connection: {e}")
                 self._connection = None
-                return await self._execute_training_query(
-                    start_time, end_time, metric_names, resource_hash,
-                    limit, offset, _retried=True,
-                )
-            logger.error(f"Synapse query error: {e}")
+            else:
+                logger.error(f"Synapse query error: {e}")
             raise
 
-    async def get_inventory(self, _retried: bool = False) -> Dict[str, Any]:
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=60),
+        retry=retry_if_exception(_is_transient_synapse_error),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    async def get_inventory(self) -> Dict[str, Any]:
         """
         Get inventory of data available in Data Lake.
 
@@ -419,11 +456,11 @@ class SynapseClient:
             }
 
         except pyodbc.Error as e:
-            if not _retried and "08S01" in str(e):
-                logger.warning(f"Synapse connection lost during inventory, retrying: {e}")
+            if _is_transient_synapse_error(e):
+                logger.warning(f"Transient Synapse error during inventory, resetting connection: {e}")
                 self._connection = None
-                return await self.get_inventory(_retried=True)
-            logger.error(f"Synapse inventory query error: {e}")
+            else:
+                logger.error(f"Synapse inventory query error: {e}")
             raise
 
     def _build_partition_filter(self, start_time: datetime, end_time: datetime) -> str:

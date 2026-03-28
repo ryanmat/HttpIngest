@@ -14,6 +14,7 @@ dependencies = [
     "pyodbc>=5.0.0",
     "fastapi>=0.121.2",
     "slowapi>=0.1.9",
+    "tenacity>=9.0.0",
     "uvicorn[standard]>=0.32.0",
     # OpenTelemetry tracing
     "opentelemetry-api>=1.20.0",
