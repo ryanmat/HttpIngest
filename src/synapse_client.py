@@ -10,8 +10,10 @@ Used for ML training data requests that span beyond the hot cache window (48h).
 Cost: ~$5 per TB scanned (pay-per-query model)
 """
 
+import asyncio
 import logging
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -106,6 +108,7 @@ class SynapseClient:
     def __init__(self, config: SynapseConfig):
         self.config = config
         self._connection: Optional[pyodbc.Connection] = None
+        self._lock = threading.Lock()
 
     def _get_connection(self, force_reconnect: bool = False) -> pyodbc.Connection:
         """Get or create a Synapse connection using Azure AD auth.
@@ -213,6 +216,166 @@ class SynapseClient:
             start_time, end_time, metric_names, resource_hash, limit, offset
         )
 
+    def _execute_training_query_sync(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        metric_names: Optional[List[str]],
+        resource_hash: Optional[str],
+        limit: int,
+        offset: int,
+    ) -> Dict[str, Any]:
+        """Synchronous training data query (runs in thread pool)."""
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Build partition filter for efficient queries
+            # This uses the year/month/day/hour partitioning in the Parquet files
+            partition_filter = self._build_partition_filter(start_time, end_time)
+
+            # Build the OPENROWSET query for Parquet files
+            # Read value_double as VARCHAR to handle NaN/Infinity in legacy files,
+            # then convert to float with TRY_CONVERT (returns NULL for invalid values)
+            query = f"""
+                SELECT
+                    resource_hash,
+                    datasource_name,
+                    metric_name,
+                    timestamp,
+                    TRY_CONVERT(float, value_double) as value_double,
+                    value_int,
+                    attributes,
+                    ingested_at
+                FROM OPENROWSET(
+                    BULK '{self.config.metric_data_path}',
+                    FORMAT = 'PARQUET'
+                ) WITH (
+                    resource_hash VARCHAR(100),
+                    datasource_name VARCHAR(500),
+                    metric_name VARCHAR(500),
+                    timestamp DATETIME2,
+                    value_double VARCHAR(50),
+                    value_int BIGINT,
+                    attributes VARCHAR(MAX),
+                    ingested_at DATETIME2,
+                    year SMALLINT,
+                    month TINYINT,
+                    day TINYINT,
+                    hour TINYINT
+                ) AS [data]
+                WHERE timestamp >= ? AND timestamp <= ?
+                {partition_filter}
+            """
+            params: list = [start_time, end_time]
+
+            if metric_names:
+                placeholders = ",".join(["?" for _ in metric_names])
+                query += f" AND metric_name IN ({placeholders})"
+                params.extend(metric_names)
+
+            if resource_hash:
+                query += " AND resource_hash = ?"
+                params.append(resource_hash)
+
+            query += f" ORDER BY timestamp OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY"
+
+            try:
+                # Convert datetime to ISO format strings for Synapse compatibility
+                str_params = []
+                for p in params:
+                    if isinstance(p, datetime):
+                        str_params.append(p.strftime('%Y-%m-%dT%H:%M:%S'))
+                    else:
+                        str_params.append(p)
+
+                logger.info(f"Executing Synapse training data query with params: {str_params[:2]}")
+                cursor.execute(query, str_params)
+
+                # Check if we got a result set
+                if cursor.description is None:
+                    logger.warning("Synapse query returned no result set - may be no matching data")
+                    return {
+                        "data": [],
+                        "meta": {
+                            "total": 0,
+                            "limit": limit,
+                            "offset": offset,
+                            "start_time": start_time.isoformat(),
+                            "end_time": end_time.isoformat(),
+                            "source": "synapse_datalake",
+                            "warning": "No matching data found in specified time range",
+                        },
+                    }
+
+                rows = cursor.fetchall()
+                columns = [desc[0] for desc in cursor.description]
+
+                data = []
+                for row in rows:
+                    row_dict = dict(zip(columns, row))
+                    # Convert timestamps to ISO format
+                    if row_dict.get("timestamp"):
+                        row_dict["timestamp"] = row_dict["timestamp"].isoformat()
+                    if row_dict.get("ingested_at"):
+                        row_dict["ingested_at"] = row_dict["ingested_at"].isoformat()
+                    # Use value_double or value_int
+                    row_dict["value"] = row_dict.get("value_double") or row_dict.get("value_int")
+                    data.append(row_dict)
+
+                # Get total count (separate query for pagination)
+                # Use same schema to avoid NaN errors in legacy files
+                count_query = f"""
+                    SELECT COUNT(*) as total
+                    FROM OPENROWSET(
+                        BULK '{self.config.metric_data_path}',
+                        FORMAT = 'PARQUET'
+                    ) WITH (
+                        timestamp DATETIME2,
+                        metric_name VARCHAR(500),
+                        resource_hash VARCHAR(100),
+                        year SMALLINT,
+                        month TINYINT
+                    ) AS [data]
+                    WHERE timestamp >= ? AND timestamp <= ?
+                    {partition_filter}
+                """
+                count_params: list = [
+                    start_time.strftime('%Y-%m-%dT%H:%M:%S'),
+                    end_time.strftime('%Y-%m-%dT%H:%M:%S'),
+                ]
+                if metric_names:
+                    placeholders = ",".join(["?" for _ in metric_names])
+                    count_query += f" AND metric_name IN ({placeholders})"
+                    count_params.extend(metric_names)
+                if resource_hash:
+                    count_query += " AND resource_hash = ?"
+                    count_params.append(resource_hash)
+
+                cursor.execute(count_query, count_params)
+                count_row = cursor.fetchone()
+                total = count_row[0] if count_row else 0
+
+                return {
+                    "data": data,
+                    "meta": {
+                        "total": total,
+                        "limit": limit,
+                        "offset": offset,
+                        "start_time": start_time.isoformat(),
+                        "end_time": end_time.isoformat(),
+                        "source": "synapse_datalake",
+                    },
+                }
+
+            except pyodbc.Error as e:
+                if _is_transient_synapse_error(e):
+                    logger.warning(f"Transient Synapse error, resetting connection: {e}")
+                    self._connection = None
+                else:
+                    logger.error(f"Synapse query error: {e}")
+                raise
+
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=60),
@@ -229,152 +392,88 @@ class SynapseClient:
         limit: int,
         offset: int,
     ) -> Dict[str, Any]:
-        """Execute training data query with exponential backoff on transient errors."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        """Execute training data query without blocking the event loop."""
+        return await asyncio.to_thread(
+            self._execute_training_query_sync,
+            start_time, end_time, metric_names, resource_hash, limit, offset,
+        )
 
-        # Build partition filter for efficient queries
-        # This uses the year/month/day/hour partitioning in the Parquet files
-        partition_filter = self._build_partition_filter(start_time, end_time)
+    def _get_inventory_sync(self) -> Dict[str, Any]:
+        """Synchronous inventory query (runs in thread pool)."""
+        with self._lock:
+            conn = self._get_connection()
+            cursor = conn.cursor()
 
-        # Build the OPENROWSET query for Parquet files
-        # Read value_double as VARCHAR to handle NaN/Infinity in legacy files,
-        # then convert to float with TRY_CONVERT (returns NULL for invalid values)
-        query = f"""
-            SELECT
-                resource_hash,
-                datasource_name,
-                metric_name,
-                timestamp,
-                TRY_CONVERT(float, value_double) as value_double,
-                value_int,
-                attributes,
-                ingested_at
-            FROM OPENROWSET(
-                BULK '{self.config.metric_data_path}',
-                FORMAT = 'PARQUET'
-            ) WITH (
-                resource_hash VARCHAR(100),
-                datasource_name VARCHAR(500),
-                metric_name VARCHAR(500),
-                timestamp DATETIME2,
-                value_double VARCHAR(50),
-                value_int BIGINT,
-                attributes VARCHAR(MAX),
-                ingested_at DATETIME2,
-                year SMALLINT,
-                month TINYINT,
-                day TINYINT,
-                hour TINYINT
-            ) AS [data]
-            WHERE timestamp >= ? AND timestamp <= ?
-            {partition_filter}
-        """
-        params = [start_time, end_time]
+            try:
+                # Get unique metrics
+                metrics_query = f"""
+                    SELECT DISTINCT
+                        metric_name,
+                        datasource_name,
+                        COUNT(*) as data_points
+                    FROM OPENROWSET(
+                        BULK '{self.config.metric_data_path}',
+                        FORMAT = 'PARQUET'
+                    ) AS [data]
+                    GROUP BY metric_name, datasource_name
+                    ORDER BY data_points DESC
+                """
+                cursor.execute(metrics_query)
+                metrics = [
+                    {"metric_name": row[0], "datasource_name": row[1], "data_points": row[2]}
+                    for row in cursor.fetchall()
+                ]
 
-        if metric_names:
-            placeholders = ",".join(["?" for _ in metric_names])
-            query += f" AND metric_name IN ({placeholders})"
-            params.extend(metric_names)
+                # Get unique resources
+                resources_query = f"""
+                    SELECT DISTINCT
+                        resource_hash,
+                        COUNT(*) as data_points
+                    FROM OPENROWSET(
+                        BULK '{self.config.metric_data_path}',
+                        FORMAT = 'PARQUET'
+                    ) AS [data]
+                    GROUP BY resource_hash
+                    ORDER BY data_points DESC
+                """
+                cursor.execute(resources_query)
+                resources = [
+                    {"resource_hash": row[0], "data_points": row[1]}
+                    for row in cursor.fetchall()
+                ]
 
-        if resource_hash:
-            query += " AND resource_hash = ?"
-            params.append(resource_hash)
+                # Get time range
+                time_query = f"""
+                    SELECT
+                        MIN(timestamp) as min_ts,
+                        MAX(timestamp) as max_ts,
+                        COUNT(*) as total
+                    FROM OPENROWSET(
+                        BULK '{self.config.metric_data_path}',
+                        FORMAT = 'PARQUET'
+                    ) AS [data]
+                """
+                cursor.execute(time_query)
+                time_row = cursor.fetchone()
 
-        query += f" ORDER BY timestamp OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY"
-
-        try:
-            # Convert datetime to ISO format strings for Synapse compatibility
-            str_params = []
-            for p in params:
-                if isinstance(p, datetime):
-                    str_params.append(p.strftime('%Y-%m-%dT%H:%M:%S'))
-                else:
-                    str_params.append(p)
-
-            logger.info(f"Executing Synapse training data query with params: {str_params[:2]}")
-            cursor.execute(query, str_params)
-
-            # Check if we got a result set
-            if cursor.description is None:
-                logger.warning("Synapse query returned no result set - may be no matching data")
                 return {
-                    "data": [],
-                    "meta": {
-                        "total": 0,
-                        "limit": limit,
-                        "offset": offset,
-                        "start_time": start_time.isoformat(),
-                        "end_time": end_time.isoformat(),
-                        "source": "synapse_datalake",
-                        "warning": "No matching data found in specified time range",
+                    "metrics": metrics[:100],  # Top 100
+                    "resources": resources[:100],  # Top 100
+                    "time_range": {
+                        "start": time_row[0].isoformat() if time_row[0] else None,
+                        "end": time_row[1].isoformat() if time_row[1] else None,
                     },
+                    "total_data_points": time_row[2] or 0,
+                    "source": "synapse_datalake",
                 }
 
-            rows = cursor.fetchall()
-            columns = [desc[0] for desc in cursor.description]
-
-            data = []
-            for row in rows:
-                row_dict = dict(zip(columns, row))
-                # Convert timestamps to ISO format
-                if row_dict.get("timestamp"):
-                    row_dict["timestamp"] = row_dict["timestamp"].isoformat()
-                if row_dict.get("ingested_at"):
-                    row_dict["ingested_at"] = row_dict["ingested_at"].isoformat()
-                # Use value_double or value_int
-                row_dict["value"] = row_dict.get("value_double") or row_dict.get("value_int")
-                data.append(row_dict)
-
-            # Get total count (separate query for pagination)
-            # Use same schema to avoid NaN errors in legacy files
-            count_query = f"""
-                SELECT COUNT(*) as total
-                FROM OPENROWSET(
-                    BULK '{self.config.metric_data_path}',
-                    FORMAT = 'PARQUET'
-                ) WITH (
-                    timestamp DATETIME2,
-                    metric_name VARCHAR(500),
-                    resource_hash VARCHAR(100),
-                    year SMALLINT,
-                    month TINYINT
-                ) AS [data]
-                WHERE timestamp >= ? AND timestamp <= ?
-                {partition_filter}
-            """
-            count_params = [start_time.strftime('%Y-%m-%dT%H:%M:%S'), end_time.strftime('%Y-%m-%dT%H:%M:%S')]
-            if metric_names:
-                placeholders = ",".join(["?" for _ in metric_names])
-                count_query += f" AND metric_name IN ({placeholders})"
-                count_params.extend(metric_names)
-            if resource_hash:
-                count_query += " AND resource_hash = ?"
-                count_params.append(resource_hash)
-
-            cursor.execute(count_query, count_params)
-            count_row = cursor.fetchone()
-            total = count_row[0] if count_row else 0
-
-            return {
-                "data": data,
-                "meta": {
-                    "total": total,
-                    "limit": limit,
-                    "offset": offset,
-                    "start_time": start_time.isoformat(),
-                    "end_time": end_time.isoformat(),
-                    "source": "synapse_datalake",
-                },
-            }
-
-        except pyodbc.Error as e:
-            if _is_transient_synapse_error(e):
-                logger.warning(f"Transient Synapse error, resetting connection: {e}")
-                self._connection = None
-            else:
-                logger.error(f"Synapse query error: {e}")
-            raise
+            except pyodbc.Error as e:
+                if _is_transient_synapse_error(e):
+                    logger.warning(f"Transient Synapse error during inventory, resetting connection: {e}")
+                    self._connection = None
+                else:
+                    logger.error(f"Synapse inventory query error: {e}")
+                raise
 
     @retry(
         stop=stop_after_attempt(3),
@@ -384,84 +483,8 @@ class SynapseClient:
         reraise=True,
     )
     async def get_inventory(self) -> Dict[str, Any]:
-        """
-        Get inventory of data available in Data Lake.
-
-        Returns summary of metrics, resources, and time ranges.
-        """
-        conn = self._get_connection()
-        cursor = conn.cursor()
-
-        try:
-            # Get unique metrics
-            metrics_query = f"""
-                SELECT DISTINCT
-                    metric_name,
-                    datasource_name,
-                    COUNT(*) as data_points
-                FROM OPENROWSET(
-                    BULK '{self.config.metric_data_path}',
-                    FORMAT = 'PARQUET'
-                ) AS [data]
-                GROUP BY metric_name, datasource_name
-                ORDER BY data_points DESC
-            """
-            cursor.execute(metrics_query)
-            metrics = [
-                {"metric_name": row[0], "datasource_name": row[1], "data_points": row[2]}
-                for row in cursor.fetchall()
-            ]
-
-            # Get unique resources
-            resources_query = f"""
-                SELECT DISTINCT
-                    resource_hash,
-                    COUNT(*) as data_points
-                FROM OPENROWSET(
-                    BULK '{self.config.metric_data_path}',
-                    FORMAT = 'PARQUET'
-                ) AS [data]
-                GROUP BY resource_hash
-                ORDER BY data_points DESC
-            """
-            cursor.execute(resources_query)
-            resources = [
-                {"resource_hash": row[0], "data_points": row[1]}
-                for row in cursor.fetchall()
-            ]
-
-            # Get time range
-            time_query = f"""
-                SELECT
-                    MIN(timestamp) as min_ts,
-                    MAX(timestamp) as max_ts,
-                    COUNT(*) as total
-                FROM OPENROWSET(
-                    BULK '{self.config.metric_data_path}',
-                    FORMAT = 'PARQUET'
-                ) AS [data]
-            """
-            cursor.execute(time_query)
-            time_row = cursor.fetchone()
-
-            return {
-                "metrics": metrics[:100],  # Top 100
-                "resources": resources[:100],  # Top 100
-                "time_range": {
-                    "start": time_row[0].isoformat() if time_row[0] else None,
-                    "end": time_row[1].isoformat() if time_row[1] else None,
-                },
-                "total_data_points": time_row[2] or 0,
-                "source": "synapse_datalake",
-            }
-
-        except pyodbc.Error as e:
-            if _is_transient_synapse_error(e):
-                logger.warning(f"Transient Synapse error during inventory, resetting connection: {e}")
-                self._connection = None
-            else:
-                logger.error(f"Synapse inventory query error: {e}")
-            raise
+        """Get inventory of data available in Data Lake without blocking the event loop."""
+        return await asyncio.to_thread(self._get_inventory_sync)
 
     def _build_partition_filter(self, start_time: datetime, end_time: datetime) -> str:
         """
@@ -492,9 +515,9 @@ class SynapseClient:
 
         return " ".join(filters)
 
-    async def check_health(self) -> Dict[str, Any]:
-        """Check Synapse connection health."""
-        try:
+    def _check_health_sync(self) -> Dict[str, Any]:
+        """Synchronous Synapse health check (runs in thread pool)."""
+        with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
@@ -504,6 +527,11 @@ class SynapseClient:
                 "server": self.config.server,
                 "database": self.config.database,
             }
+
+    async def check_health(self) -> Dict[str, Any]:
+        """Check Synapse connection health without blocking the event loop."""
+        try:
+            return await asyncio.to_thread(self._check_health_sync)
         except Exception as e:
             return {
                 "status": "unhealthy",
