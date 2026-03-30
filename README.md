@@ -5,7 +5,9 @@
 
 # LogicMonitor OTLP Data Pipeline
 
-Async data pipeline for ingesting, normalizing, and exporting OTLP formatted JSON metrics from LogicMonitor Data Publisher (HTTPS). Serves as the **data ingestion layer** for the Precursor predictive ML ecosystem.
+Async data pipeline for ingesting, normalizing, and exporting OTLP formatted JSON metrics from
+LogicMonitor Data Publisher (HTTPS). Serves as the **data ingestion layer** for the Precursor
+predictive ML ecosystem and cross-cloud training data API for GCP Vertex AI.
 
 ## Ecosystem Overview
 
@@ -26,20 +28,20 @@ HttpIngest is the data layer of a three-tier ML ecosystem for predictive monitor
 +-------------------------------------------------------------------------+
 |                          ML LAYER                                       |
 |                                                                         |
-|   Precursor (precursor)                                       |
+|   Precursor (GCP Cloud Run)                                            |
 |   - Feature engineering (windowing, normalization)                      |
 |   - X-DEC Model (BiGRU-XVAE-DEC clustering)                            |
-|   - Prediction API                                                      |
+|   - Prediction API, Chronos forecasting                                 |
 +-------------------------------------------------------------------------+
                                    |
-                                   v (Phase 14+)
+                                   v
 +-------------------------------------------------------------------------+
-|                       QUANTUM LAYER                                     |
+|                       QUANTUM + PDP LAYER                               |
 |                                                                         |
-|   quantum_mcp                                                           |
-|   - QAOA routing for expert selection                                   |
-|   - D-Wave annealing for QUBO optimization                             |
-|   - Quantum kernels for enhanced clustering                             |
+|   quantum_mcp (quantum_engine library)                                  |
+|   - QUBO optimization (portfolio, routing, triage, scheduling)          |
+|   - D-Wave annealing, Qiskit simulation, IBM Quantum                   |
+|   - Quantum feature generation for classical ML                         |
 +-------------------------------------------------------------------------+
 ```
 
@@ -47,7 +49,7 @@ See [docs/ecosystem-integration.md](docs/ecosystem-integration.md) for full inte
 
 ## Architecture
 
-**Storage Mode:** Data Lake only (v32+)
+**Storage Mode:** Data Lake only (v32+). Current: v51 (async Synapse, cross-cloud reachable from GCP).
 
 **Components:**
 - Azure Container Apps (async Python FastAPI)
