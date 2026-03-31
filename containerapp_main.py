@@ -351,15 +351,18 @@ async def synapse_warmup_loop():
     a cold start (30s to 2+ minutes). This task runs a lightweight OPENROWSET
     query every 4 minutes to keep the pool warm, so real ML queries respond
     within the Container App's 240-second request timeout.
+
+    Runs immediately on startup (no initial sleep) so the pool is warm
+    before the first real ML query arrives.
     """
     logger.info("Starting Synapse warmup loop...")
     warmup_interval = int(os.getenv("SYNAPSE_WARMUP_INTERVAL_SECONDS", "240"))
 
     while not shutdown_event.is_set():
         try:
-            await asyncio.sleep(warmup_interval)
             if synapse_client:
                 await asyncio.to_thread(_synapse_warmup_query)
+            await asyncio.sleep(warmup_interval)
         except Exception as e:
             logger.warning(f"Synapse warmup query failed: {e}")
             await asyncio.sleep(30)
