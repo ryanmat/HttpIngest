@@ -244,6 +244,10 @@ async def lifespan(app: FastAPI):
         if datalake_writer:
             background_tasks["datalake_flush"] = asyncio.create_task(datalake_flush_loop())
 
+        # Synapse warmup task (keep serverless pool alive to avoid cold-start timeouts)
+        if synapse_client and SYNAPSE_ENABLED:
+            background_tasks["synapse_warmup"] = asyncio.create_task(synapse_warmup_loop())
+
         # Hot cache tasks (only if enabled)
         if HOT_CACHE_ENABLED and db_pool:
             background_tasks["data_processing"] = asyncio.create_task(data_processing_loop())
@@ -337,6 +341,49 @@ async def datalake_flush_loop():
         except Exception as e:
             logger.error(f"Data Lake flush error: {e}", exc_info=True)
             await asyncio.sleep(10)
+
+
+async def synapse_warmup_loop():
+    """Background task to keep Synapse Serverless pool warm.
+
+    Synapse Serverless drops idle connections and deallocates compute after
+    ~5 minutes of inactivity. The first OPENROWSET query after idle requires
+    a cold start (30s to 2+ minutes). This task runs a lightweight OPENROWSET
+    query every 4 minutes to keep the pool warm, so real ML queries respond
+    within the Container App's 240-second request timeout.
+    """
+    logger.info("Starting Synapse warmup loop...")
+    warmup_interval = int(os.getenv("SYNAPSE_WARMUP_INTERVAL_SECONDS", "240"))
+
+    while not shutdown_event.is_set():
+        try:
+            await asyncio.sleep(warmup_interval)
+            if synapse_client:
+                await asyncio.to_thread(_synapse_warmup_query)
+        except Exception as e:
+            logger.warning(f"Synapse warmup query failed: {e}")
+            await asyncio.sleep(30)
+
+
+def _synapse_warmup_query():
+    """Run a lightweight OPENROWSET query to keep Synapse compute warm."""
+    if synapse_client is None:
+        return
+    with synapse_client._lock:
+        conn = synapse_client._get_connection()
+        cursor = conn.cursor()
+        bulk_path = synapse_client.config.metric_data_path
+        cursor.execute(
+            f"SELECT TOP 1 timestamp FROM OPENROWSET("
+            f"BULK '{bulk_path}', FORMAT='PARQUET'"
+            f") WITH (timestamp DATETIME2) AS r"
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        if row:
+            logger.info(f"Synapse warmup: pool alive, latest ts={row[0]}")
+        else:
+            logger.info("Synapse warmup: pool alive, no data yet")
 
 
 async def hot_cache_cleanup_loop():
