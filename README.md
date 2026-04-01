@@ -5,13 +5,14 @@
 
 # LogicMonitor OTLP Data Pipeline
 
-Async data pipeline for ingesting, normalizing, and exporting OTLP formatted JSON metrics from
-LogicMonitor Data Publisher (HTTPS). Serves as the **data ingestion layer** for the Precursor
-predictive ML ecosystem and cross-cloud training data API for GCP Vertex AI.
+Async data pipeline for ingesting and storing OTLP formatted JSON metrics from LogicMonitor
+Data Publisher (HTTPS) into Azure Data Lake Gen2 as Parquet. Serves as the **data ingestion
+layer** for the Precursor predictive ML ecosystem.
 
 ## Ecosystem Overview
 
-HttpIngest is the data layer of a three-tier ML ecosystem for predictive monitoring:
+HttpIngest is the ingestion layer of a multi-tier ML ecosystem for predictive monitoring.
+It receives metrics and writes Parquet to ADLS. Downstream consumers read ADLS directly.
 
 ```
                          DATA LAYER (this project)
@@ -23,55 +24,53 @@ HttpIngest is the data layer of a three-tier ML ecosystem for predictive monitor
 |                                                                         |
 +-------------------------------------------------------------------------+
                                    |
-                                   | ML Query Layer (/api/ml/*)
-                                   v
-+-------------------------------------------------------------------------+
-|                          ML LAYER                                       |
-|                                                                         |
-|   Precursor (GCP Cloud Run)                                            |
-|   - Feature engineering (windowing, normalization)                      |
-|   - X-DEC Model (BiGRU-XVAE-DEC clustering)                            |
-|   - Prediction API, Chronos forecasting                                 |
-+-------------------------------------------------------------------------+
+                      Direct ADLS reads (DuckDB, gsutil)
                                    |
-                                   v
-+-------------------------------------------------------------------------+
-|                       QUANTUM + PDP LAYER                               |
-|                                                                         |
-|   quantum_mcp (quantum_engine library)                                  |
-|   - QUBO optimization (portfolio, routing, triage, scheduling)          |
-|   - D-Wave annealing, Qiskit simulation, IBM Quantum                   |
-|   - Quantum feature generation for classical ML                         |
-+-------------------------------------------------------------------------+
+              +--------------------+--------------------+
+              v                                         v
++---------------------------+            +---------------------------+
+|       ML LAYER            |            |    QUANTUM + PDP LAYER    |
+|                           |            |                           |
+|  Precursor (GCP Cloud Run)|            |  quantum_mcp              |
+|  - X-DEC, Chronos, TTM   |            |  - QUBO optimization      |
+|  - Training via Vertex AI |            |  - D-Wave, Qiskit, IBM    |
+|  - Reads GCS Parquet      |            |  - Reads PDP tracker      |
++---------------------------+            +---------------------------+
 ```
-
-See [docs/ecosystem-integration.md](docs/ecosystem-integration.md) for full integration details.
 
 ## Architecture
 
-**Storage Mode:** Data Lake only (v32+). Current: v51 (async Synapse, cross-cloud reachable from GCP).
+**Current Version:** v53 (ADLS-only mode, deployed 2026-03-31)
 
 **Components:**
-- Azure Container Apps (async Python FastAPI)
-- Azure Data Lake Gen2 (Parquet files, partitioned by time)
-- Azure Synapse Serverless SQL (ML query layer)
+- Azure Container Apps (async Python FastAPI, 0-3 replicas, scale-to-zero)
+- Azure Data Lake Gen2 (Parquet files, Hive-partitioned by time)
 - Azure Managed Identity (passwordless auth)
 
 **Data Flow:**
 ```
-LogicMonitor Collector --> HTTPS Publisher --> Container App (/api/HttpIngest)
-    --> Data Lake (Parquet, year/month/day/hour partitions)
-    --> Synapse Serverless SQL (/api/ml/* endpoints)
-    --> Precursor ML (training data)
+LogicMonitor Collector 117 --> Data Publisher (OTLP, gzip)
+    --> Container App (/api/HttpIngest)
+    --> Async buffer (600s interval or 50K rows)
+    --> ADLS Parquet (year/month/day/hour partitions)
+    --> DuckDB direct reads (weekly training cron)
+    --> gsutil cp to GCS (for Vertex AI training)
 ```
 
 **Key Features:**
-- Async processing with buffered writes
-- Parquet files with time-based partitioning (year/month/day/hour)
-- Synapse Serverless SQL for cost-effective ML queries (~$5/TB scanned)
+- Async processing with buffered writes (non-blocking ADLS uploads via asyncio.to_thread)
+- Hive-partitioned Parquet files (year/month/day/hour)
+- Scale-to-zero (0 replicas when idle, scales to 3 under load)
 - Managed identity authentication (no password storage)
-- Auto-scaling (1-5 replicas based on HTTP concurrency)
-- Gzip compression support
+- Gzip decompression on ingest
+- Prometheus /metrics endpoint
+
+**Removed in v53 (Session 28 cleanup, -12,100 lines):**
+- Azure Synapse Serverless SQL (workspace deleted, never used for training)
+- ML query endpoints (/api/ml/*) -- training reads ADLS via DuckDB directly
+- PostgreSQL hot cache
+- Export format handlers (Grafana, PowerBI, CSV, JSON)
+- ODBC drivers from Docker image (~200MB savings)
 
 ## Prerequisites
 
@@ -99,8 +98,6 @@ uv run python -m uvicorn containerapp_main:app --reload --host 0.0.0.0 --port 80
 **Required (set on Container App):**
 ```bash
 USE_MANAGED_IDENTITY=true           # Use Azure managed identity
-HOT_CACHE_ENABLED=false             # Disable PostgreSQL hot cache
-SYNAPSE_ENABLED=true                # Enable Synapse ML queries
 ENABLE_COLLECTOR_PUBLISHER=true     # Enable collector data ingestion
 ```
 
@@ -109,14 +106,8 @@ ENABLE_COLLECTOR_PUBLISHER=true     # Enable collector data ingestion
 DATALAKE_ACCOUNT=stlmingestdatalake       # Storage account name
 DATALAKE_FILESYSTEM=metrics               # Container name
 DATALAKE_BASE_PATH=otlp                   # Base path in container
-DATALAKE_FLUSH_INTERVAL_SECONDS=60        # Buffer flush interval
-DATALAKE_FLUSH_THRESHOLD_ROWS=10000       # Flush when buffer hits this size
-```
-
-**Synapse Configuration:**
-```bash
-SYNAPSE_SERVER=syn-lm-analytics-ondemand.sql.azuresynapse.net
-SYNAPSE_DATABASE=master
+DATALAKE_FLUSH_INTERVAL_SECONDS=600       # Buffer flush interval (10 min)
+DATALAKE_FLUSH_THRESHOLD_ROWS=50000       # Flush when buffer hits this size
 ```
 
 ## Deployment
@@ -126,13 +117,13 @@ SYNAPSE_DATABASE=master
 ```bash
 # 1. Build image in ACR
 az acr build --registry acrctalmhttps001 \
-  --image httpingest:v32 \
+  --image httpingest:v53 \
   --file Dockerfile.containerapp .
 
 # 2. Deploy to Container App
 az containerapp update --name ca-cta-lm-ingest \
   --resource-group CTA_Resource_Group \
-  --image acrctalmhttps001.azurecr.io/httpingest:v32
+  --image acrctalmhttps001.azurecr.io/httpingest:v53
 
 # 3. Verify health
 curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/health
@@ -141,10 +132,8 @@ curl https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api
 ### Automated Deploy
 
 ```bash
-./scripts/deploy.sh v32
+./scripts/deploy.sh v53
 ```
-
-See [docs/deployment.md](docs/deployment.md) for full deployment guide.
 
 ## API Endpoints
 
@@ -173,38 +162,26 @@ curl https://your-app.azurecontainerapps.io/api/health
 ```json
 {
   "status": "healthy",
-  "version": "32.0.0",
+  "version": "53.0.0",
   "mode": "datalake_only",
   "components": {
-    "datalake": { "status": "healthy" },
-    "hot_cache": { "status": "disabled" },
-    "synapse": { "status": "healthy" }
+    "datalake": { "status": "healthy" }
   }
 }
 ```
 
-### ML Endpoints (via Synapse)
+### Metrics
 
 ```bash
-# Get data inventory
-curl https://your-app.azurecontainerapps.io/api/ml/inventory
-
-# Get training data
-curl "https://your-app.azurecontainerapps.io/api/ml/training-data?start_time=2026-01-01T00:00:00Z&end_time=2026-01-25T00:00:00Z"
-
-# List feature profiles
-curl https://your-app.azurecontainerapps.io/api/ml/profiles
-
-# Check profile coverage
-curl https://your-app.azurecontainerapps.io/api/ml/profile-coverage
+# Prometheus-format metrics
+curl https://your-app.azurecontainerapps.io/metrics
 ```
 
 ## LogicMonitor Configuration
 
-Configure Collector HTTPS Publisher in LogicMonitor:
+Data Publisher is configured on Collector 117 in the LM portal:
 
 ```properties
-# In Collector agent.conf or via UI
 publisher.http.enable=true
 publisher.http.url=https://ca-cta-lm-ingest.greensea-6af53795.eastus.azurecontainerapps.io/api/HttpIngest
 publisher.http.format=otlp
@@ -215,24 +192,23 @@ publisher.http.batch.interval=30
 
 ## Data Lake Structure
 
-Parquet files are organized by time partitions:
+Parquet files are Hive-partitioned by time:
 
 ```
-metrics/
-  otlp/
-    metric_data/
-      year=2026/
-        month=01/
-          day=25/
-            hour=12/
-              part-20260125120000-abc123.parquet
-    resources/
-      resources-20260125120000-def456.parquet
-    datasources/
-      datasources-20260125120000-ghi789.parquet
-    metric_definitions/
-      metric_definitions-20260125120000-jkl012.parquet
+stlmingestdatalake/
+  metrics/
+    otlp/
+      metric_data/
+        year=2026/
+          month=03/
+            day=31/
+              hour=12/
+                part-20260331120000-abc123.parquet
 ```
+
+**Downstream consumers read ADLS directly:**
+- Weekly training cron: DuckDB reads Parquet partitions, uploads to GCS via gsutil
+- Compaction script: `scripts/compact_parquet.py` merges small files to day-level (manual)
 
 ## Running Tests
 
@@ -252,22 +228,18 @@ uv run pytest tests/test_datalake_components.py -v
 ```
 .
 ├── containerapp_main.py      # FastAPI application entry point
-├── Dockerfile.containerapp   # Container image build file
-├── pyproject.toml           # Python dependencies (uv)
+├── Dockerfile.containerapp   # Container image (non-root, single worker)
+├── pyproject.toml           # Python dependencies (uv), version 53.0.0
 ├── src/                     # Source code
-│   ├── datalake_writer.py   # Data Lake Parquet writer
-│   ├── synapse_client.py    # Synapse Serverless SQL client
-│   ├── ml_service.py        # ML endpoint service
-│   ├── ingestion_router.py  # Route data to storage backends
-│   ├── otlp_parser.py       # OTLP parsing logic
-│   └── exporters.py         # Export format handlers
-├── scripts/                 # Deployment scripts
-│   └── deploy.sh            # Automated deployment
-├── tests/                   # Test suite
+│   ├── datalake_writer.py   # Async Data Lake Parquet writer
+│   ├── ingestion_router.py  # Route data to ADLS backend
+│   ├── otlp_parser.py       # OTLP parsing and normalization
+│   └── tracing.py           # OpenTelemetry instrumentation
+├── scripts/
+│   ├── deploy.sh            # Automated ACR build + Container App deploy
+│   └── compact_parquet.py   # Merge small Parquet files to day-level
+├── tests/                   # 10 test files
 └── docs/                    # Documentation
-    ├── deployment.md
-    ├── ecosystem-integration.md
-    └── api-documentation.md
 ```
 
 ## Monitoring
@@ -287,26 +259,25 @@ az containerapp logs show --name ca-cta-lm-ingest \
 ### Scaling
 
 ```bash
-# Current: 1-5 replicas, scales on HTTP concurrency (10 per replica)
+# Current: 0-3 replicas, scale-to-zero enabled
 az containerapp update --name ca-cta-lm-ingest \
   --resource-group CTA_Resource_Group \
-  --min-replicas 1 --max-replicas 10
+  --min-replicas 0 --max-replicas 3
 ```
 
 ## Troubleshooting
 
-### Empty ML Inventory
-- Verify collectors are sending data to `/api/HttpIngest`
-- Check Data Lake buffer is flushing (health endpoint shows buffer stats)
-- Confirm Synapse has Storage Blob Data Reader role on Data Lake
-
-### Synapse Connection Errors
-- Verify managed identity has Synapse SQL Administrator role
-- Check Synapse firewall allows Azure services (0.0.0.0-0.0.0.0)
-
 ### Data Not Appearing
-- Default flush interval is 60 seconds, or 10,000 rows
+- Default flush interval is 600 seconds (10 min), or 50,000 rows
 - Check container logs for flush activity: `grep flush`
+- Verify Data Publisher is active on Collector 117 in LM portal
+
+### Container App Not Starting
+- Check ACR image tag matches deployed revision
+- Verify Managed Identity has Storage Blob Data Contributor on ADLS
+
+### Stale Partitions
+- Run compaction script to merge small hourly files: `uv run python scripts/compact_parquet.py`
 
 ## License
 
