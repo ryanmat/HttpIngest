@@ -1,16 +1,13 @@
-# Description: Tests for async containerapp endpoints with connection pooling
-# Description: Verifies performance improvements from async database operations
+# Description: Tests for async containerapp endpoints
+# Description: Verifies health check, ingestion, and error handling
 
 import pytest
 import pytest_asyncio
 import asyncio
-import json
 from datetime import datetime
 from httpx import AsyncClient, ASGITransport
-import asyncpg
 
-# Import the app
-from containerapp_main import app, get_db_connection_params
+from containerapp_main import app
 
 
 @pytest_asyncio.fixture
@@ -34,23 +31,23 @@ async def test_health_check_async():
         assert "status" in data
         assert "timestamp" in data
         assert "components" in data
-        # New architecture: datalake, hot_cache, synapse, ingestion_router, background_tasks
         assert "datalake" in data["components"]
-        assert "hot_cache" in data["components"]
         assert "ingestion_router" in data["components"]
         assert "background_tasks" in data["components"]
 
 
 @pytest.mark.asyncio
 async def test_http_ingest_async(async_client):
-    """Test that HTTP ingestion uses async database operations."""
-    # Create a valid OTLP payload
+    """Test that HTTP ingestion endpoint accepts OTLP payloads."""
     payload = {
         "resourceMetrics": [
             {
                 "resource": {
                     "attributes": [
-                        {"key": "service.name", "value": {"stringValue": "test-service"}}
+                        {
+                            "key": "service.name",
+                            "value": {"stringValue": "test-service"},
+                        }
                     ]
                 },
                 "scopeMetrics": [
@@ -64,25 +61,24 @@ async def test_http_ingest_async(async_client):
                                     "dataPoints": [
                                         {
                                             "asInt": 42,
-                                            "timeUnixNano": str(int(datetime.now().timestamp() * 1e9))
+                                            "timeUnixNano": str(
+                                                int(datetime.now().timestamp() * 1e9)
+                                            ),
                                         }
                                     ]
-                                }
+                                },
                             }
-                        ]
+                        ],
                     }
-                ]
+                ],
             }
         ]
     }
 
     response = await async_client.post(
-        "/api/HttpIngest",
-        json=payload,
-        headers={"content-type": "application/json"}
+        "/api/HttpIngest", json=payload, headers={"content-type": "application/json"}
     )
 
-    # Should succeed if database is available, or return 503 if not
     assert response.status_code in [200, 503]
 
     if response.status_code == 200:
@@ -94,10 +90,7 @@ async def test_http_ingest_async(async_client):
 
 @pytest.mark.asyncio
 async def test_concurrent_ingestion_performance():
-    """
-    Test that concurrent ingestion requests complete in reasonable time.
-    This verifies the async connection pool is working properly.
-    """
+    """Test that concurrent ingestion requests complete in reasonable time."""
     payload = {
         "resourceMetrics": [
             {
@@ -117,14 +110,16 @@ async def test_concurrent_ingestion_performance():
                                     "dataPoints": [
                                         {
                                             "asInt": 1,
-                                            "timeUnixNano": str(int(datetime.now().timestamp() * 1e9))
+                                            "timeUnixNano": str(
+                                                int(datetime.now().timestamp() * 1e9)
+                                            ),
                                         }
                                     ]
-                                }
+                                },
                             }
-                        ]
+                        ],
                     }
-                ]
+                ],
             }
         ]
     }
@@ -135,51 +130,29 @@ async def test_concurrent_ingestion_performance():
         response = await client.post(
             "/api/HttpIngest",
             json=payload,
-            headers={"content-type": "application/json"}
+            headers={"content-type": "application/json"},
         )
         end = asyncio.get_event_loop().time()
         return response.status_code, end - start
 
-    # Send 10 concurrent requests
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         tasks = [send_request(client, i) for i in range(10)]
         results = await asyncio.gather(*tasks)
 
-        # Calculate average response time
         response_times = [r[1] for r in results if r[0] in [200, 503]]
 
         if response_times:
             avg_time = sum(response_times) / len(response_times)
             max_time = max(response_times)
 
-            # With async operations and connection pool:
-            # - Average should be < 1 second
-            # - Max should be < 2 seconds
-            # (These are generous limits; actual should be much faster)
             print(f"Performance test: avg={avg_time:.3f}s, max={max_time:.3f}s")
 
-            # Only assert if database is available (200 responses)
             if any(r[0] == 200 for r in results):
-                assert avg_time < 1.0, f"Average response time too high: {avg_time:.3f}s"
+                assert avg_time < 1.0, (
+                    f"Average response time too high: {avg_time:.3f}s"
+                )
                 assert max_time < 2.0, f"Max response time too high: {max_time:.3f}s"
-
-
-@pytest.mark.asyncio
-async def test_connection_pool_parameters():
-    """Test that connection pool is configured with correct parameters."""
-    # This test verifies the pool configuration in the lifespan
-    # We can't easily test the actual pool from here, but we can verify
-    # that the connection parameters are correct
-    params = get_db_connection_params()
-
-    assert "host" in params
-    assert "port" in params
-    assert "database" in params
-    assert "user" in params
-    assert "password" in params
-    assert "ssl" in params
-    assert params["ssl"] == "require"
 
 
 @pytest.mark.asyncio
@@ -190,7 +163,7 @@ async def test_invalid_json_handling():
         response = await client.post(
             "/api/HttpIngest",
             content=b"{invalid json",
-            headers={"content-type": "application/json"}
+            headers={"content-type": "application/json"},
         )
 
         assert response.status_code == 400
@@ -207,7 +180,7 @@ async def test_missing_resource_metrics():
         response = await client.post(
             "/api/HttpIngest",
             json={"invalid": "payload"},
-            headers={"content-type": "application/json"}
+            headers={"content-type": "application/json"},
         )
 
         assert response.status_code == 400

@@ -1,30 +1,25 @@
-# Description: Unit tests for Data Lake migration components
-# Description: Tests datalake_writer, synapse_client, hot_cache_manager, and ingestion_router
+# Description: Unit tests for Data Lake ingestion components
+# Description: Tests datalake_writer, ingestion_router config, stats, and routing
 
 """
-Unit tests for the Azure Data Lake Gen2 migration components.
+Unit tests for the Azure Data Lake Gen2 ingestion components.
 
 Tests the following modules:
 - datalake_writer: Parquet buffering and partitioning
-- synapse_client: Configuration and partition filter building
-- hot_cache_manager: TTL-based cleanup logic
-- ingestion_router: Dual-write routing and statistics
+- ingestion_router: Routing configuration and statistics
 """
 
-import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
 from src.datalake_writer import (
     METRIC_DATA_SCHEMA,
     DataLakeConfig,
     DataLakeWriter,
 )
-from src.hot_cache_manager import HotCacheManager
 from src.ingestion_router import IngestionConfig, IngestionRouter, IngestionStats
 from src.otlp_parser import (
     DatasourceData,
@@ -33,15 +28,6 @@ from src.otlp_parser import (
     ParsedOTLP,
     ResourceData,
 )
-
-# Synapse client requires pyodbc which needs ODBC drivers - make import optional
-try:
-    from src.synapse_client import SynapseClient, SynapseConfig
-    SYNAPSE_AVAILABLE = True
-except ImportError:
-    SYNAPSE_AVAILABLE = False
-    SynapseClient = None
-    SynapseConfig = None
 
 
 class TestDataLakeConfig:
@@ -55,8 +41,8 @@ class TestDataLakeConfig:
             assert config.account_name == "stlmingestdatalake"
             assert config.filesystem == "metrics"
             assert config.base_path == "otlp"
-            assert config.flush_interval_seconds == 60
-            assert config.flush_threshold_rows == 10000
+            assert config.flush_interval_seconds == 600
+            assert config.flush_threshold_rows == 50000
 
     def test_from_env_custom(self):
         """Test DataLakeConfig uses custom env vars."""
@@ -143,7 +129,7 @@ class TestDataLakeWriter:
         assert result["attributes"] is None
 
     def test_datapoint_to_dict_sanitizes_nan(self, writer):
-        """Test that NaN values are converted to None for Synapse compatibility."""
+        """Test that NaN values are converted to None for Parquet compatibility."""
         now = datetime.now(timezone.utc)
         dp = MetricDataPoint(
             resource_hash="abc123",
@@ -161,7 +147,7 @@ class TestDataLakeWriter:
         assert result["value_double"] is None
 
     def test_datapoint_to_dict_sanitizes_infinity(self, writer):
-        """Test that Infinity values are converted to None for Synapse compatibility."""
+        """Test that Infinity values are converted to None for Parquet compatibility."""
         now = datetime.now(timezone.utc)
         dp = MetricDataPoint(
             resource_hash="abc123",
@@ -196,9 +182,7 @@ class TestDataLakeWriter:
             resources=[
                 ResourceData(resource_hash="res1", attributes={"service": "test"})
             ],
-            datasources=[
-                DatasourceData(name="ds1", version="1.0")
-            ],
+            datasources=[DatasourceData(name="ds1", version="1.0")],
             metric_definitions=[
                 MetricDefinitionData(
                     datasource_name="ds1",
@@ -235,13 +219,12 @@ class TestDataLakeWriter:
     @pytest.mark.asyncio
     async def test_write_metrics_deduplicates_resources(self, writer):
         """Test that duplicate resources are deduplicated."""
-        now = datetime.now(timezone.utc)
-
-        # Add same resource twice
         for _ in range(2):
             parsed = ParsedOTLP(
                 resources=[
-                    ResourceData(resource_hash="same-hash", attributes={"service": "test"})
+                    ResourceData(
+                        resource_hash="same-hash", attributes={"service": "test"}
+                    )
                 ],
                 datasources=[],
                 metric_definitions=[],
@@ -250,7 +233,7 @@ class TestDataLakeWriter:
             await writer.write_metrics(parsed)
 
         stats = writer.get_buffer_stats()
-        assert stats["resources_buffered"] == 1  # Only one resource
+        assert stats["resources_buffered"] == 1
 
     def test_metric_data_schema_fields(self):
         """Test that METRIC_DATA_SCHEMA has expected fields."""
@@ -270,218 +253,6 @@ class TestDataLakeWriter:
         assert "hour" in field_names
 
 
-@pytest.mark.skipif(not SYNAPSE_AVAILABLE, reason="pyodbc/ODBC drivers not available")
-class TestSynapseConfig:
-    """Tests for SynapseConfig."""
-
-    def test_from_env_defaults(self):
-        """Test SynapseConfig uses defaults when env vars not set."""
-        with patch.dict(os.environ, {}, clear=True):
-            config = SynapseConfig.from_env()
-
-            assert "sql.azuresynapse.net" in config.server
-            assert config.database == "master"
-            assert config.datalake_account == "stlmingestdatalake"
-            assert config.datalake_filesystem == "metrics"
-            assert config.datalake_base_path == "otlp"
-
-    def test_metric_data_path(self):
-        """Test metric_data_path property."""
-        config = SynapseConfig(
-            server="test.sql.azuresynapse.net",
-            datalake_account="testaccount",
-            datalake_filesystem="testfs",
-            datalake_base_path="base",
-        )
-
-        path = config.metric_data_path
-
-        assert "abfss://testfs@testaccount.dfs.core.windows.net" in path
-        assert "base/metric_data/" in path
-
-    def test_resources_path(self):
-        """Test resources_path property."""
-        config = SynapseConfig(
-            server="test.sql.azuresynapse.net",
-            datalake_account="testaccount",
-            datalake_filesystem="testfs",
-            datalake_base_path="base",
-        )
-
-        path = config.resources_path
-
-        assert "abfss://testfs@testaccount.dfs.core.windows.net" in path
-        assert "base/resources/" in path
-
-
-@pytest.mark.skipif(not SYNAPSE_AVAILABLE, reason="pyodbc/ODBC drivers not available")
-class TestSynapseClient:
-    """Tests for SynapseClient."""
-
-    @pytest.fixture
-    def config(self):
-        """Create test config."""
-        return SynapseConfig(
-            server="test.sql.azuresynapse.net",
-            database="testdb",
-        )
-
-    @pytest.fixture
-    def client(self, config):
-        """Create test client."""
-        return SynapseClient(config)
-
-    def test_build_partition_filter_same_year(self, client):
-        """Test partition filter for same year range."""
-        start = datetime(2024, 3, 15, 10, 0, 0)
-        end = datetime(2024, 3, 15, 12, 0, 0)
-
-        filter_str = client._build_partition_filter(start, end)
-
-        assert "year = 2024" in filter_str
-        assert "month = 3" in filter_str
-
-    def test_build_partition_filter_different_years(self, client):
-        """Test partition filter spanning different years."""
-        start = datetime(2023, 11, 1, 0, 0, 0)
-        end = datetime(2024, 2, 1, 0, 0, 0)
-
-        filter_str = client._build_partition_filter(start, end)
-
-        assert "year >= 2023" in filter_str
-        assert "year <= 2024" in filter_str
-        # Month filter should not be added for different years
-        assert "month" not in filter_str
-
-    def test_build_partition_filter_different_months(self, client):
-        """Test partition filter spanning different months same year."""
-        start = datetime(2024, 3, 15, 10, 0, 0)
-        end = datetime(2024, 5, 20, 12, 0, 0)
-
-        filter_str = client._build_partition_filter(start, end)
-
-        assert "year = 2024" in filter_str
-        assert "month >= 3" in filter_str
-        assert "month <= 5" in filter_str
-
-
-class TestHotCacheManager:
-    """Tests for HotCacheManager."""
-
-    @pytest.fixture
-    def mock_pool(self):
-        """Create mock asyncpg pool."""
-        pool = MagicMock()
-        return pool
-
-    def test_init_default_retention(self, mock_pool):
-        """Test default retention hours."""
-        with patch.dict(os.environ, {}, clear=True):
-            manager = HotCacheManager(mock_pool)
-            assert manager.retention_hours == 48
-
-    def test_init_custom_retention(self, mock_pool):
-        """Test custom retention hours from env."""
-        with patch.dict(os.environ, {"HOT_CACHE_RETENTION_HOURS": "24"}, clear=True):
-            manager = HotCacheManager(mock_pool)
-            assert manager.retention_hours == 24
-
-    def test_init_explicit_retention(self, mock_pool):
-        """Test explicit retention hours parameter."""
-        manager = HotCacheManager(mock_pool, retention_hours=12)
-        assert manager.retention_hours == 12
-
-    @pytest.mark.asyncio
-    async def test_cleanup_expired_data_parses_delete_result(self):
-        """Test cleanup correctly parses DELETE results."""
-        mock_conn = AsyncMock()
-        mock_conn.execute = AsyncMock(
-            side_effect=["DELETE 100", "DELETE 50", "DELETE 25"]
-        )
-
-        # Create proper async context manager
-        mock_cm = AsyncMock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_cm.__aexit__ = AsyncMock(return_value=None)
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock(return_value=mock_cm)
-
-        manager = HotCacheManager(mock_pool)
-        result = await manager.cleanup_expired_data()
-
-        assert result["metric_data"] == 100
-        assert result["processing_status"] == 50
-        assert result["lm_metrics"] == 25
-
-    @pytest.mark.asyncio
-    async def test_is_healthy_returns_true_for_empty_cache(self):
-        """Test health check returns true for empty cache."""
-        mock_conn = AsyncMock()
-        mock_conn.fetchval = AsyncMock(return_value=None)
-
-        mock_cm = AsyncMock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_cm.__aexit__ = AsyncMock(return_value=None)
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock(return_value=mock_cm)
-
-        manager = HotCacheManager(mock_pool)
-        result = await manager.is_healthy()
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_is_healthy_returns_true_for_recent_data(self):
-        """Test health check returns true for recent data."""
-        recent_time = datetime.now(timezone.utc) - timedelta(hours=1)
-        mock_conn = AsyncMock()
-        mock_conn.fetchval = AsyncMock(return_value=recent_time)
-
-        mock_cm = AsyncMock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_cm.__aexit__ = AsyncMock(return_value=None)
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock(return_value=mock_cm)
-
-        manager = HotCacheManager(mock_pool, retention_hours=48)
-        result = await manager.is_healthy()
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_is_healthy_returns_false_for_stale_data(self):
-        """Test health check returns false for stale data."""
-        stale_time = datetime.now(timezone.utc) - timedelta(hours=200)
-        mock_conn = AsyncMock()
-        mock_conn.fetchval = AsyncMock(return_value=stale_time)
-
-        mock_cm = AsyncMock()
-        mock_cm.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_cm.__aexit__ = AsyncMock(return_value=None)
-
-        mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock(return_value=mock_cm)
-
-        manager = HotCacheManager(mock_pool, retention_hours=48)
-        result = await manager.is_healthy()
-
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_is_healthy_returns_false_on_exception(self):
-        """Test health check returns false on exception."""
-        mock_pool = MagicMock()
-        mock_pool.acquire = MagicMock(side_effect=Exception("Connection error"))
-
-        manager = HotCacheManager(mock_pool)
-        result = await manager.is_healthy()
-
-        assert result is False
-
-
 class TestIngestionConfig:
     """Tests for IngestionConfig."""
 
@@ -491,19 +262,16 @@ class TestIngestionConfig:
             config = IngestionConfig.from_env()
 
             assert config.write_to_datalake is True
-            assert config.write_to_hot_cache is True
 
     def test_from_env_disabled(self):
         """Test disabled writes."""
         env = {
             "WRITE_TO_DATALAKE": "false",
-            "WRITE_TO_HOT_CACHE": "false",
         }
         with patch.dict(os.environ, env, clear=True):
             config = IngestionConfig.from_env()
 
             assert config.write_to_datalake is False
-            assert config.write_to_hot_cache is False
 
 
 class TestIngestionStats:
@@ -517,7 +285,6 @@ class TestIngestionStats:
             metric_definitions=10,
             metric_data=100,
             datalake_written=100,
-            hot_cache_written=100,
             errors=[],
         )
 
@@ -528,7 +295,6 @@ class TestIngestionStats:
         assert result["metric_definitions"] == 10
         assert result["metric_data"] == 100
         assert result["datalake_written"] == 100
-        assert result["hot_cache_written"] == 100
         assert result["errors"] == []
 
     def test_to_dict_with_errors(self):
@@ -539,7 +305,6 @@ class TestIngestionStats:
             metric_definitions=0,
             metric_data=0,
             datalake_written=0,
-            hot_cache_written=0,
             errors=["Error 1", "Error 2"],
         )
 
@@ -559,24 +324,17 @@ class TestIngestionRouter:
         return writer
 
     @pytest.fixture
-    def mock_db_pool(self):
-        """Create mock db pool."""
-        return AsyncMock()
-
-    @pytest.fixture
     def config(self):
         """Create test config."""
         return IngestionConfig(
             write_to_datalake=True,
-            write_to_hot_cache=False,  # Disable hot cache for simpler tests
         )
 
     @pytest.fixture
-    def router(self, mock_datalake_writer, mock_db_pool, config):
+    def router(self, mock_datalake_writer, config):
         """Create test router."""
         return IngestionRouter(
             datalake_writer=mock_datalake_writer,
-            db_pool=mock_db_pool,
             config=config,
         )
 
@@ -602,7 +360,11 @@ class TestIngestionRouter:
                                         "dataPoints": [
                                             {
                                                 "asInt": 42,
-                                                "timeUnixNano": str(int(datetime.now().timestamp() * 1e9)),
+                                                "timeUnixNano": str(
+                                                    int(
+                                                        datetime.now().timestamp() * 1e9
+                                                    )
+                                                ),
                                             }
                                         ]
                                     },
@@ -657,7 +419,11 @@ class TestIngestionRouter:
                                         "dataPoints": [
                                             {
                                                 "asInt": 1,
-                                                "timeUnixNano": str(int(datetime.now().timestamp() * 1e9)),
+                                                "timeUnixNano": str(
+                                                    int(
+                                                        datetime.now().timestamp() * 1e9
+                                                    )
+                                                ),
                                             }
                                         ]
                                     },
@@ -685,17 +451,15 @@ class TestIngestionRouter:
 
         assert "config" in status
         assert status["config"]["write_to_datalake"] is True
-        assert status["config"]["write_to_hot_cache"] is False
         assert "datalake" in status
         assert status["datalake"]["metric_data_buffered"] == 5
 
     @pytest.mark.asyncio
-    async def test_router_without_datalake_writer(self, mock_db_pool):
+    async def test_router_without_datalake_writer(self):
         """Test router works without datalake writer."""
-        config = IngestionConfig(write_to_datalake=True, write_to_hot_cache=False)
+        config = IngestionConfig(write_to_datalake=True)
         router = IngestionRouter(
             datalake_writer=None,
-            db_pool=mock_db_pool,
             config=config,
         )
 
@@ -713,7 +477,11 @@ class TestIngestionRouter:
                                         "dataPoints": [
                                             {
                                                 "asInt": 1,
-                                                "timeUnixNano": str(int(datetime.now().timestamp() * 1e9)),
+                                                "timeUnixNano": str(
+                                                    int(
+                                                        datetime.now().timestamp() * 1e9
+                                                    )
+                                                ),
                                             }
                                         ]
                                     },
@@ -727,60 +495,5 @@ class TestIngestionRouter:
 
         stats = await router.ingest(payload)
 
-        # Should complete without errors (just no data written)
         assert stats.datalake_written == 0
         assert "Data Lake write error" not in str(stats.errors)
-
-
-class TestExportersHotCacheValidation:
-    """Tests for exporters 48h time limit validation."""
-
-    def test_hot_cache_time_range_error_message(self):
-        """Test HotCacheTimeRangeError has informative message."""
-        from src.exporters import HotCacheTimeRangeError
-
-        requested = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-        allowed = datetime(2024, 1, 10, 0, 0, 0, tzinfo=timezone.utc)
-
-        error = HotCacheTimeRangeError(requested, allowed)
-
-        assert "2024-01-01" in str(error)
-        assert "2024-01-10" in str(error)
-        assert "hot cache window" in str(error)
-        assert "Synapse" in str(error)
-
-    def test_validate_hot_cache_passes_when_disabled(self):
-        """Test validation passes when hot cache is disabled."""
-        from src.exporters import validate_hot_cache_time_range
-
-        with patch("src.exporters.HOT_CACHE_ENABLED", False):
-            # Should not raise even for very old times
-            old_time = datetime(2020, 1, 1, tzinfo=timezone.utc)
-            validate_hot_cache_time_range(old_time, datetime.now(timezone.utc))
-
-    def test_validate_hot_cache_passes_for_recent_data(self):
-        """Test validation passes for recent time range."""
-        from src.exporters import validate_hot_cache_time_range
-
-        with patch("src.exporters.HOT_CACHE_ENABLED", True):
-            with patch("src.exporters.HOT_CACHE_RETENTION_HOURS", 48):
-                recent = datetime.now(timezone.utc) - timedelta(hours=24)
-                validate_hot_cache_time_range(recent, datetime.now(timezone.utc))
-
-    def test_validate_hot_cache_raises_for_old_data(self):
-        """Test validation raises for data beyond retention window."""
-        from src.exporters import HotCacheTimeRangeError, validate_hot_cache_time_range
-
-        with patch("src.exporters.HOT_CACHE_ENABLED", True):
-            with patch("src.exporters.HOT_CACHE_RETENTION_HOURS", 48):
-                old_time = datetime.now(timezone.utc) - timedelta(hours=100)
-
-                with pytest.raises(HotCacheTimeRangeError):
-                    validate_hot_cache_time_range(old_time, datetime.now(timezone.utc))
-
-    def test_validate_hot_cache_none_start_time_passes(self):
-        """Test validation passes when start_time is None."""
-        from src.exporters import validate_hot_cache_time_range
-
-        with patch("src.exporters.HOT_CACHE_ENABLED", True):
-            validate_hot_cache_time_range(None, datetime.now(timezone.utc))

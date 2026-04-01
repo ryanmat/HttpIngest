@@ -25,6 +25,7 @@ from dataclasses import dataclass, asdict
 @dataclass
 class ResourceData:
     """Represents a parsed OTLP resource."""
+
     resource_hash: str
     attributes: Dict[str, Any]
 
@@ -32,6 +33,7 @@ class ResourceData:
 @dataclass
 class DatasourceData:
     """Represents a parsed OTLP datasource (scope)."""
+
     name: str
     version: Optional[str]
 
@@ -39,6 +41,7 @@ class DatasourceData:
 @dataclass
 class MetricDefinitionData:
     """Represents a parsed metric definition."""
+
     datasource_name: str
     datasource_version: Optional[str]
     name: str
@@ -50,6 +53,7 @@ class MetricDefinitionData:
 @dataclass
 class MetricDataPoint:
     """Represents a parsed time-series data point."""
+
     resource_hash: str
     datasource_name: str
     datasource_version: Optional[str]
@@ -63,6 +67,7 @@ class MetricDataPoint:
 @dataclass
 class ParsedOTLP:
     """Complete parsed OTLP data structure."""
+
     resources: List[ResourceData]
     datasources: List[DatasourceData]
     metric_definitions: List[MetricDefinitionData]
@@ -71,10 +76,10 @@ class ParsedOTLP:
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for easier testing/serialization."""
         return {
-            'resources': [asdict(r) for r in self.resources],
-            'datasources': [asdict(d) for d in self.datasources],
-            'metric_definitions': [asdict(m) for m in self.metric_definitions],
-            'metric_data': [asdict(m) for m in self.metric_data],
+            "resources": [asdict(r) for r in self.resources],
+            "datasources": [asdict(d) for d in self.datasources],
+            "metric_definitions": [asdict(m) for m in self.metric_definitions],
+            "metric_data": [asdict(m) for m in self.metric_data],
         }
 
 
@@ -91,24 +96,27 @@ def extract_attribute_value(attr_value: Dict[str, Any]) -> Any:
         Extracted value (string, int, bool, etc.)
     """
     # OTLP attribute value types
-    if 'stringValue' in attr_value:
-        return attr_value['stringValue']
-    elif 'intValue' in attr_value:
-        return attr_value['intValue']
-    elif 'doubleValue' in attr_value:
-        return attr_value['doubleValue']
-    elif 'boolValue' in attr_value:
-        return attr_value['boolValue']
-    elif 'bytesValue' in attr_value:
-        return attr_value['bytesValue']
-    elif 'arrayValue' in attr_value:
+    if "stringValue" in attr_value:
+        return attr_value["stringValue"]
+    elif "intValue" in attr_value:
+        return attr_value["intValue"]
+    elif "doubleValue" in attr_value:
+        return attr_value["doubleValue"]
+    elif "boolValue" in attr_value:
+        return attr_value["boolValue"]
+    elif "bytesValue" in attr_value:
+        return attr_value["bytesValue"]
+    elif "arrayValue" in attr_value:
         # Array of values
-        return [extract_attribute_value(v) for v in attr_value['arrayValue'].get('values', [])]
-    elif 'kvlistValue' in attr_value:
+        return [
+            extract_attribute_value(v)
+            for v in attr_value["arrayValue"].get("values", [])
+        ]
+    elif "kvlistValue" in attr_value:
         # Key-value list
         return {
-            kv['key']: extract_attribute_value(kv['value'])
-            for kv in attr_value['kvlistValue'].get('values', [])
+            kv["key"]: extract_attribute_value(kv["value"])
+            for kv in attr_value["kvlistValue"].get("values", [])
         }
     else:
         # Unknown type, return as-is
@@ -127,9 +135,9 @@ def parse_resource_attributes(resource: Dict[str, Any]) -> Dict[str, Any]:
     """
     attributes = {}
 
-    for attr in resource.get('attributes', []):
-        key = attr.get('key')
-        value = attr.get('value', {})
+    for attr in resource.get("attributes", []):
+        key = attr.get("key")
+        value = attr.get("value", {})
 
         if key:
             attributes[key] = extract_attribute_value(value)
@@ -176,7 +184,7 @@ def parse_data_point(
     resource_hash: str,
     datasource_name: str,
     datasource_version: Optional[str],
-    metric_name: str
+    metric_name: str,
 ) -> MetricDataPoint:
     """
     Parse a single OTLP data point.
@@ -192,26 +200,26 @@ def parse_data_point(
         MetricDataPoint object
     """
     # Extract timestamp
-    time_unix_nano = data_point.get('timeUnixNano', 0)
+    time_unix_nano = data_point.get("timeUnixNano", 0)
     timestamp = convert_nano_timestamp(time_unix_nano)
 
     # Extract value (either asDouble or asInt)
     # LogicMonitor may send these as strings or numbers
-    value_double = data_point.get('asDouble')
+    value_double = data_point.get("asDouble")
     if value_double is not None and isinstance(value_double, str):
         value_double = float(value_double)
 
-    value_int = data_point.get('asInt')
+    value_int = data_point.get("asInt")
     if value_int is not None and isinstance(value_int, str):
         value_int = int(value_int)
 
     # Extract additional attributes if present
     attributes = None
-    if 'attributes' in data_point:
+    if "attributes" in data_point:
         attributes = {}
-        for attr in data_point['attributes']:
-            key = attr.get('key')
-            value = attr.get('value', {})
+        for attr in data_point["attributes"]:
+            key = attr.get("key")
+            value = attr.get("value", {})
             if key:
                 attributes[key] = extract_attribute_value(value)
 
@@ -223,7 +231,7 @@ def parse_data_point(
         timestamp=timestamp,
         value_double=value_double,
         value_int=value_int,
-        attributes=attributes
+        attributes=attributes,
     )
 
 
@@ -231,7 +239,7 @@ def parse_metric(
     metric: Dict[str, Any],
     resource_hash: str,
     datasource_name: str,
-    datasource_version: Optional[str]
+    datasource_version: Optional[str],
 ) -> Tuple[MetricDefinitionData, List[MetricDataPoint]]:
     """
     Parse an OTLP metric and its data points.
@@ -245,42 +253,40 @@ def parse_metric(
     Returns:
         Tuple of (MetricDefinitionData, list of MetricDataPoints)
     """
-    metric_name = metric.get('name', 'unknown')
-    unit = metric.get('unit')
-    description = metric.get('description')
+    metric_name = metric.get("name", "unknown")
+    unit = metric.get("unit")
+    description = metric.get("description")
 
     # Determine metric type and extract data points
     data_points = []
-    metric_type = 'unknown'
+    metric_type = "unknown"
 
-    if 'gauge' in metric:
-        metric_type = 'gauge'
-        data_points_raw = metric['gauge'].get('dataPoints', [])
-    elif 'sum' in metric:
-        metric_type = 'sum'
-        data_points_raw = metric['sum'].get('dataPoints', [])
-    elif 'histogram' in metric:
-        metric_type = 'histogram'
-        data_points_raw = metric['histogram'].get('dataPoints', [])
-    elif 'summary' in metric:
-        metric_type = 'summary'
-        data_points_raw = metric['summary'].get('dataPoints', [])
-    elif 'exponentialHistogram' in metric:
-        metric_type = 'exponentialHistogram'
-        data_points_raw = metric['exponentialHistogram'].get('dataPoints', [])
+    if "gauge" in metric:
+        metric_type = "gauge"
+        data_points_raw = metric["gauge"].get("dataPoints", [])
+    elif "sum" in metric:
+        metric_type = "sum"
+        data_points_raw = metric["sum"].get("dataPoints", [])
+    elif "histogram" in metric:
+        metric_type = "histogram"
+        data_points_raw = metric["histogram"].get("dataPoints", [])
+    elif "summary" in metric:
+        metric_type = "summary"
+        data_points_raw = metric["summary"].get("dataPoints", [])
+    elif "exponentialHistogram" in metric:
+        metric_type = "exponentialHistogram"
+        data_points_raw = metric["exponentialHistogram"].get("dataPoints", [])
     else:
         # Unknown metric type
         data_points_raw = []
 
     # Parse data points
     for dp in data_points_raw:
-        data_points.append(parse_data_point(
-            dp,
-            resource_hash,
-            datasource_name,
-            datasource_version,
-            metric_name
-        ))
+        data_points.append(
+            parse_data_point(
+                dp, resource_hash, datasource_name, datasource_version, metric_name
+            )
+        )
 
     # Create metric definition
     metric_def = MetricDefinitionData(
@@ -289,15 +295,14 @@ def parse_metric(
         name=metric_name,
         unit=unit,
         metric_type=metric_type,
-        description=description
+        description=description,
     )
 
     return metric_def, data_points
 
 
 def parse_scope_metrics(
-    scope_metrics: Dict[str, Any],
-    resource_hash: str
+    scope_metrics: Dict[str, Any], resource_hash: str
 ) -> Tuple[DatasourceData, List[MetricDefinitionData], List[MetricDataPoint]]:
     """
     Parse OTLP scopeMetrics (datasource and its metrics).
@@ -310,25 +315,19 @@ def parse_scope_metrics(
         Tuple of (DatasourceData, list of MetricDefinitionData, list of MetricDataPoints)
     """
     # Extract scope (datasource) information
-    scope = scope_metrics.get('scope', {})
-    datasource_name = scope.get('name', 'unknown')
-    datasource_version = scope.get('version')
+    scope = scope_metrics.get("scope", {})
+    datasource_name = scope.get("name", "unknown")
+    datasource_version = scope.get("version")
 
-    datasource = DatasourceData(
-        name=datasource_name,
-        version=datasource_version
-    )
+    datasource = DatasourceData(name=datasource_name, version=datasource_version)
 
     # Parse all metrics in this scope
     all_metric_defs = []
     all_data_points = []
 
-    for metric in scope_metrics.get('metrics', []):
+    for metric in scope_metrics.get("metrics", []):
         metric_def, data_points = parse_metric(
-            metric,
-            resource_hash,
-            datasource_name,
-            datasource_version
+            metric, resource_hash, datasource_name, datasource_version
         )
         all_metric_defs.append(metric_def)
         all_data_points.extend(data_points)
@@ -337,8 +336,13 @@ def parse_scope_metrics(
 
 
 def parse_resource_metrics(
-    resource_metrics: Dict[str, Any]
-) -> Tuple[ResourceData, List[DatasourceData], List[MetricDefinitionData], List[MetricDataPoint]]:
+    resource_metrics: Dict[str, Any],
+) -> Tuple[
+    ResourceData,
+    List[DatasourceData],
+    List[MetricDefinitionData],
+    List[MetricDataPoint],
+]:
     """
     Parse OTLP resourceMetrics (resource and all its metrics).
 
@@ -349,24 +353,20 @@ def parse_resource_metrics(
         Tuple of (ResourceData, list of DatasourceData, list of MetricDefinitionData, list of MetricDataPoints)
     """
     # Parse resource
-    resource = resource_metrics.get('resource', {})
+    resource = resource_metrics.get("resource", {})
     attributes = parse_resource_attributes(resource)
     resource_hash = compute_resource_hash(attributes)
 
-    resource_data = ResourceData(
-        resource_hash=resource_hash,
-        attributes=attributes
-    )
+    resource_data = ResourceData(resource_hash=resource_hash, attributes=attributes)
 
     # Parse all scope metrics
     all_datasources = []
     all_metric_defs = []
     all_data_points = []
 
-    for scope_metrics in resource_metrics.get('scopeMetrics', []):
+    for scope_metrics in resource_metrics.get("scopeMetrics", []):
         datasource, metric_defs, data_points = parse_scope_metrics(
-            scope_metrics,
-            resource_hash
+            scope_metrics, resource_hash
         )
         all_datasources.append(datasource)
         all_metric_defs.extend(metric_defs)
@@ -393,7 +393,7 @@ def parse_otlp(otlp_payload: Dict[str, Any]) -> ParsedOTLP:
     if not otlp_payload:
         raise ValueError("OTLP payload cannot be empty")
 
-    if 'resourceMetrics' not in otlp_payload:
+    if "resourceMetrics" not in otlp_payload:
         raise ValueError("OTLP payload missing 'resourceMetrics' field")
 
     all_resources = []
@@ -402,8 +402,10 @@ def parse_otlp(otlp_payload: Dict[str, Any]) -> ParsedOTLP:
     all_data_points = []
 
     # Parse each resourceMetrics entry
-    for resource_metrics in otlp_payload.get('resourceMetrics', []):
-        resource, datasources, metric_defs, data_points = parse_resource_metrics(resource_metrics)
+    for resource_metrics in otlp_payload.get("resourceMetrics", []):
+        resource, datasources, metric_defs, data_points = parse_resource_metrics(
+            resource_metrics
+        )
 
         all_resources.append(resource)
         all_datasources.extend(datasources)
@@ -414,7 +416,7 @@ def parse_otlp(otlp_payload: Dict[str, Any]) -> ParsedOTLP:
         resources=all_resources,
         datasources=all_datasources,
         metric_definitions=all_metric_defs,
-        metric_data=all_data_points
+        metric_data=all_data_points,
     )
 
 
@@ -461,7 +463,9 @@ def deduplicate_datasources(datasources: List[DatasourceData]) -> List[Datasourc
     return unique_datasources
 
 
-def deduplicate_metric_definitions(metric_defs: List[MetricDefinitionData]) -> List[MetricDefinitionData]:
+def deduplicate_metric_definitions(
+    metric_defs: List[MetricDefinitionData],
+) -> List[MetricDefinitionData]:
     """
     Deduplicate metric definitions by (datasource_name, datasource_version, name).
 
@@ -475,7 +479,11 @@ def deduplicate_metric_definitions(metric_defs: List[MetricDefinitionData]) -> L
     unique_metrics = []
 
     for metric_def in metric_defs:
-        key = (metric_def.datasource_name, metric_def.datasource_version, metric_def.name)
+        key = (
+            metric_def.datasource_name,
+            metric_def.datasource_version,
+            metric_def.name,
+        )
         if key not in seen_metrics:
             seen_metrics.add(key)
             unique_metrics.append(metric_def)

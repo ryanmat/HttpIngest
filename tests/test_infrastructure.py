@@ -1,7 +1,6 @@
 # Description: Tests to verify pytest infrastructure and fixtures work correctly
 # Description: Validates database connections, sample data loading, and test isolation
 
-import pytest
 import json
 
 
@@ -39,12 +38,15 @@ def test_clean_test_table_fixture(db_connection, clean_test_table):
 
     # Verify table exists
     with db_connection.cursor() as cur:
-        cur.execute("""
+        cur.execute(
+            """
             SELECT EXISTS (
                 SELECT FROM information_schema.tables
                 WHERE table_name = %s
             )
-        """, (test_table,))
+        """,
+            (test_table,),
+        )
         exists = cur.fetchone()[0]
         assert exists is True
 
@@ -52,7 +54,7 @@ def test_clean_test_table_fixture(db_connection, clean_test_table):
     with db_connection.cursor() as cur:
         cur.execute(
             f"INSERT INTO {test_table} (payload) VALUES (%s) RETURNING id",
-            (json.dumps({"test": "data"}),)
+            (json.dumps({"test": "data"}),),
         )
         insert_id = cur.fetchone()[0]
         assert insert_id > 0
@@ -121,7 +123,7 @@ def test_fixtures_isolation(db_connection, clean_test_table):
     with db_connection.cursor() as cur:
         cur.execute(
             f"INSERT INTO {test_table} (payload) VALUES (%s)",
-            (json.dumps({"isolation": "test1"}),)
+            (json.dumps({"isolation": "test1"}),),
         )
         db_connection.commit()
 

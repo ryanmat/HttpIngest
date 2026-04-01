@@ -4,7 +4,6 @@
 import pytest
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 from src.otlp_parser import (
     parse_otlp,
@@ -22,8 +21,7 @@ from src.otlp_parser import (
     ResourceData,
     DatasourceData,
     MetricDefinitionData,
-    MetricDataPoint,
-    ParsedOTLP
+    ParsedOTLP,
 )
 
 
@@ -61,7 +59,7 @@ def test_parse_resource_attributes():
         "attributes": [
             {"key": "service.name", "value": {"stringValue": "web-server"}},
             {"key": "host.name", "value": {"stringValue": "server01"}},
-            {"key": "port", "value": {"intValue": 8080}}
+            {"key": "port", "value": {"intValue": 8080}},
         ]
     }
 
@@ -118,17 +116,10 @@ def test_convert_nano_timestamp():
 
 def test_parse_data_point_with_double():
     """Test parsing data point with asDouble value."""
-    data_point = {
-        "timeUnixNano": 1699123456000000000,
-        "asDouble": 45.2
-    }
+    data_point = {"timeUnixNano": 1699123456000000000, "asDouble": 45.2}
 
     result = parse_data_point(
-        data_point,
-        "test_hash_123",
-        "CPU_Usage",
-        "1.0",
-        "cpu.usage"
+        data_point, "test_hash_123", "CPU_Usage", "1.0", "cpu.usage"
     )
 
     assert result.resource_hash == "test_hash_123"
@@ -142,17 +133,10 @@ def test_parse_data_point_with_double():
 
 def test_parse_data_point_with_int():
     """Test parsing data point with asInt value."""
-    data_point = {
-        "timeUnixNano": 1699123456000000000,
-        "asInt": 1024
-    }
+    data_point = {"timeUnixNano": 1699123456000000000, "asInt": 1024}
 
     result = parse_data_point(
-        data_point,
-        "test_hash_456",
-        "Memory",
-        None,
-        "memory.bytes"
+        data_point, "test_hash_456", "Memory", None, "memory.bytes"
     )
 
     assert result.value_int == 1024
@@ -166,17 +150,11 @@ def test_parse_data_point_with_attributes():
         "asDouble": 100.0,
         "attributes": [
             {"key": "unit", "value": {"stringValue": "percent"}},
-            {"key": "threshold", "value": {"intValue": 90}}
-        ]
+            {"key": "threshold", "value": {"intValue": 90}},
+        ],
     }
 
-    result = parse_data_point(
-        data_point,
-        "test_hash",
-        "TestDS",
-        "1.0",
-        "test.metric"
-    )
+    result = parse_data_point(data_point, "test_hash", "TestDS", "1.0", "test.metric")
 
     assert result.attributes is not None
     assert result.attributes["unit"] == "percent"
@@ -192,16 +170,13 @@ def test_parse_metric_gauge():
         "gauge": {
             "dataPoints": [
                 {"timeUnixNano": 1699123456000000000, "asDouble": 45.2},
-                {"timeUnixNano": 1699123457000000000, "asDouble": 46.1}
+                {"timeUnixNano": 1699123457000000000, "asDouble": 46.1},
             ]
-        }
+        },
     }
 
     metric_def, data_points = parse_metric(
-        metric,
-        "resource_hash_123",
-        "CPU_Usage",
-        "1.0"
+        metric, "resource_hash_123", "CPU_Usage", "1.0"
     )
 
     assert metric_def.name == "cpu.usage"
@@ -219,18 +194,11 @@ def test_parse_metric_sum():
     metric = {
         "name": "requests.total",
         "unit": "count",
-        "sum": {
-            "dataPoints": [
-                {"timeUnixNano": 1699123456000000000, "asInt": 1000}
-            ]
-        }
+        "sum": {"dataPoints": [{"timeUnixNano": 1699123456000000000, "asInt": 1000}]},
     }
 
     metric_def, data_points = parse_metric(
-        metric,
-        "resource_hash_456",
-        "HTTP_Requests",
-        "2.0"
+        metric, "resource_hash_456", "HTTP_Requests", "2.0"
     )
 
     assert metric_def.metric_type == "sum"
@@ -241,10 +209,7 @@ def test_parse_metric_sum():
 def test_parse_scope_metrics():
     """Test parsing scopeMetrics."""
     scope_metrics = {
-        "scope": {
-            "name": "CPU_Usage",
-            "version": "1.0"
-        },
+        "scope": {"name": "CPU_Usage", "version": "1.0"},
         "metrics": [
             {
                 "name": "cpu.usage",
@@ -253,14 +218,13 @@ def test_parse_scope_metrics():
                     "dataPoints": [
                         {"timeUnixNano": 1699123456000000000, "asDouble": 45.2}
                     ]
-                }
+                },
             }
-        ]
+        ],
     }
 
     datasource, metric_defs, data_points = parse_scope_metrics(
-        scope_metrics,
-        "resource_hash_789"
+        scope_metrics, "resource_hash_789"
     )
 
     assert datasource.name == "CPU_Usage"
@@ -275,7 +239,7 @@ def test_parse_resource_metrics():
         "resource": {
             "attributes": [
                 {"key": "service.name", "value": {"stringValue": "web-server"}},
-                {"key": "host.name", "value": {"stringValue": "server01"}}
+                {"key": "host.name", "value": {"stringValue": "server01"}},
             ]
         },
         "scopeMetrics": [
@@ -289,14 +253,16 @@ def test_parse_resource_metrics():
                             "dataPoints": [
                                 {"timeUnixNano": 1699123456000000000, "asDouble": 45.2}
                             ]
-                        }
+                        },
                     }
-                ]
+                ],
             }
-        ]
+        ],
     }
 
-    resource, datasources, metric_defs, data_points = parse_resource_metrics(resource_metrics)
+    resource, datasources, metric_defs, data_points = parse_resource_metrics(
+        resource_metrics
+    )
 
     assert resource.attributes["service.name"] == "web-server"
     assert resource.attributes["host.name"] == "server01"
@@ -397,10 +363,10 @@ def test_parse_otlp_to_dict(sample_otlp_cpu_metrics):
     result = parse_otlp(sample_otlp_cpu_metrics)
     result_dict = result.to_dict()
 
-    assert 'resources' in result_dict
-    assert 'datasources' in result_dict
-    assert 'metric_definitions' in result_dict
-    assert 'metric_data' in result_dict
+    assert "resources" in result_dict
+    assert "datasources" in result_dict
+    assert "metric_definitions" in result_dict
+    assert "metric_data" in result_dict
 
     # Verify structure is serializable
     json_str = json.dumps(result_dict, default=str)  # datetime needs str conversion
@@ -412,7 +378,7 @@ def test_deduplicate_resources():
     resources = [
         ResourceData("hash1", {"service": "web"}),
         ResourceData("hash1", {"service": "web"}),  # Duplicate
-        ResourceData("hash2", {"service": "api"})
+        ResourceData("hash2", {"service": "api"}),
     ]
 
     unique = deduplicate_resources(resources)
@@ -428,7 +394,7 @@ def test_deduplicate_datasources():
         DatasourceData("CPU_Usage", "1.0"),
         DatasourceData("CPU_Usage", "1.0"),  # Duplicate
         DatasourceData("CPU_Usage", "2.0"),  # Different version
-        DatasourceData("Memory", "1.0")
+        DatasourceData("Memory", "1.0"),
     ]
 
     unique = deduplicate_datasources(datasources)
@@ -441,9 +407,13 @@ def test_deduplicate_metric_definitions():
     """Test deduplicating metric definitions."""
     metrics = [
         MetricDefinitionData("CPU_Usage", "1.0", "cpu.usage", "percent", "gauge", None),
-        MetricDefinitionData("CPU_Usage", "1.0", "cpu.usage", "percent", "gauge", None),  # Duplicate
-        MetricDefinitionData("CPU_Usage", "1.0", "cpu.idle", "percent", "gauge", None),  # Different metric
-        MetricDefinitionData("Memory", "1.0", "memory.used", "bytes", "gauge", None)
+        MetricDefinitionData(
+            "CPU_Usage", "1.0", "cpu.usage", "percent", "gauge", None
+        ),  # Duplicate
+        MetricDefinitionData(
+            "CPU_Usage", "1.0", "cpu.idle", "percent", "gauge", None
+        ),  # Different metric
+        MetricDefinitionData("Memory", "1.0", "memory.used", "bytes", "gauge", None),
     ]
 
     unique = deduplicate_metric_definitions(metrics)
@@ -464,27 +434,34 @@ def test_parse_otlp_from_file(sample_otlp_data):
 def test_resource_hash_consistency():
     """Test that resource hashes are consistent across parses."""
     payload1 = {
-        "resourceMetrics": [{
-            "resource": {
-                "attributes": [
-                    {"key": "service.name", "value": {"stringValue": "test"}},
-                    {"key": "host.name", "value": {"stringValue": "host1"}}
-                ]
-            },
-            "scopeMetrics": []
-        }]
+        "resourceMetrics": [
+            {
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "test"}},
+                        {"key": "host.name", "value": {"stringValue": "host1"}},
+                    ]
+                },
+                "scopeMetrics": [],
+            }
+        ]
     }
 
     payload2 = {
-        "resourceMetrics": [{
-            "resource": {
-                "attributes": [
-                    {"key": "host.name", "value": {"stringValue": "host1"}},  # Different order
-                    {"key": "service.name", "value": {"stringValue": "test"}}
-                ]
-            },
-            "scopeMetrics": []
-        }]
+        "resourceMetrics": [
+            {
+                "resource": {
+                    "attributes": [
+                        {
+                            "key": "host.name",
+                            "value": {"stringValue": "host1"},
+                        },  # Different order
+                        {"key": "service.name", "value": {"stringValue": "test"}},
+                    ]
+                },
+                "scopeMetrics": [],
+            }
+        ]
     }
 
     result1 = parse_otlp(payload1)
@@ -508,15 +485,10 @@ def test_parse_metric_unknown_type():
     """Test parsing metric with unknown type."""
     metric = {
         "name": "unknown.metric",
-        "unknownType": {}  # Not a standard OTLP metric type
+        "unknownType": {},  # Not a standard OTLP metric type
     }
 
-    metric_def, data_points = parse_metric(
-        metric,
-        "hash",
-        "Unknown",
-        "1.0"
-    )
+    metric_def, data_points = parse_metric(metric, "hash", "Unknown", "1.0")
 
     assert metric_def.metric_type == "unknown"
     assert len(data_points) == 0
@@ -526,9 +498,7 @@ def test_multiple_scope_metrics_per_resource():
     """Test parsing resource with multiple scopeMetrics."""
     resource_metrics = {
         "resource": {
-            "attributes": [
-                {"key": "host", "value": {"stringValue": "server01"}}
-            ]
+            "attributes": [{"key": "host", "value": {"stringValue": "server01"}}]
         },
         "scopeMetrics": [
             {
@@ -540,9 +510,9 @@ def test_multiple_scope_metrics_per_resource():
                             "dataPoints": [
                                 {"timeUnixNano": 1699123456000000000, "asDouble": 45.2}
                             ]
-                        }
+                        },
                     }
-                ]
+                ],
             },
             {
                 "scope": {"name": "Memory", "version": "1.0"},
@@ -553,14 +523,16 @@ def test_multiple_scope_metrics_per_resource():
                             "dataPoints": [
                                 {"timeUnixNano": 1699123456000000000, "asInt": 1024}
                             ]
-                        }
+                        },
                     }
-                ]
-            }
-        ]
+                ],
+            },
+        ],
     }
 
-    resource, datasources, metric_defs, data_points = parse_resource_metrics(resource_metrics)
+    resource, datasources, metric_defs, data_points = parse_resource_metrics(
+        resource_metrics
+    )
 
     assert len(datasources) == 2
     assert len(metric_defs) == 2

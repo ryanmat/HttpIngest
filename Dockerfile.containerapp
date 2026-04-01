@@ -1,62 +1,43 @@
-# Description: Dockerfile optimized for Azure Container Apps deployment
-# Description: Uses standard Python image with uv and runs FastAPI directly via uvicorn
+# Description: Dockerfile for Azure Container Apps OTLP ingestion service
+# Description: Multi-stage build with uv, minimal runtime dependencies
 
 # Builder stage - install dependencies with uv
-FROM python:3.12-slim AS builder
+FROM python:3.12.8-slim AS builder
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
-    libpq-dev \
-    python3-dev \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Copy dependency files
 COPY pyproject.toml uv.lock ./
 
-# Install Python dependencies
 RUN uv sync --frozen
 
 # Final stage - lightweight runtime
-FROM python:3.12-slim
+FROM python:3.12.8-slim
 
-# Install runtime dependencies and Microsoft ODBC Driver 18 for Synapse
-RUN apt-get update && apt-get install -y \
-    libpq5 \
-    curl \
-    gnupg2 \
-    unixodbc \
-    && curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
-    && curl -fsSL https://packages.microsoft.com/config/debian/12/prod.list > /etc/apt/sources.list.d/mssql-release.list \
-    && apt-get update \
-    && ACCEPT_EULA=Y apt-get install -y msodbcsql18 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install uv in final stage
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+RUN useradd --create-home --shell /bin/bash httpingest
 
 WORKDIR /app
 
-# Copy dependencies from builder
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app:$PYTHONPATH" \
     PYTHONUNBUFFERED=1
 
-# Copy application code
-COPY . /app/
+COPY --chown=httpingest:httpingest . /app/
 
-# Expose port for Container Apps
+USER httpingest
+
 EXPOSE 8000
 
-# Run FastAPI with uvicorn via python module.
-# 2 workers: each gets its own event loop, so a blocking Synapse query
-# in one worker cannot stall health probes handled by the other.
-CMD ["python", "-m", "uvicorn", "containerapp_main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+STOPSIGNAL SIGTERM
+
+CMD ["python", "-m", "uvicorn", "containerapp_main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

@@ -33,7 +33,6 @@ from opentelemetry.sdk.trace.export import (
 from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.instrumentation.logging import LoggingInstrumentor
 from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
@@ -96,8 +95,9 @@ class LoggingSpanExporter(SpanExporter):
     def force_flush(self, timeout_millis: int = 30000) -> bool:
         return self._wrapped.force_flush(timeout_millis)
 
+
 # Version should match pyproject.toml
-SERVICE_VERSION_VALUE = "49.0.0"
+SERVICE_VERSION_VALUE = "53.0.0"
 
 
 def get_tracing_config() -> dict:
@@ -139,7 +139,9 @@ def create_otlp_exporter(config: dict) -> Optional[OTLPSpanExporter]:
     endpoint = config["otlp_endpoint"]
 
     if not endpoint:
-        logger.warning("OTEL_EXPORTER_OTLP_ENDPOINT not set, cannot create OTLP exporter")
+        logger.warning(
+            "OTEL_EXPORTER_OTLP_ENDPOINT not set, cannot create OTLP exporter"
+        )
         return None
 
     return OTLPSpanExporter(endpoint=endpoint)
@@ -166,12 +168,16 @@ def setup_tracing(app=None) -> Optional[TracerProvider]:
     )
 
     # Create resource with service info
-    resource = Resource.create({
-        SERVICE_NAME: config["service_name"],
-        SERVICE_VERSION: config["service_version"],
-        "service.namespace": os.getenv("OTEL_SERVICE_NAMESPACE", "precursor-platform"),
-        "deployment.environment": os.getenv("ENVIRONMENT", "production"),
-    })
+    resource = Resource.create(
+        {
+            SERVICE_NAME: config["service_name"],
+            SERVICE_VERSION: config["service_version"],
+            "service.namespace": os.getenv(
+                "OTEL_SERVICE_NAMESPACE", "precursor-platform"
+            ),
+            "deployment.environment": os.getenv("ENVIRONMENT", "production"),
+        }
+    )
 
     # Create sampler
     sampler = TraceIdRatioBased(config["sample_rate"])
@@ -190,7 +196,9 @@ def setup_tracing(app=None) -> Optional[TracerProvider]:
     elif exporter_type == "console":
         exporter = ConsoleSpanExporter()
     else:
-        logger.warning(f"Unknown exporter type: {exporter_type}, falling back to console")
+        logger.warning(
+            f"Unknown exporter type: {exporter_type}, falling back to console"
+        )
         exporter = ConsoleSpanExporter()
 
     if exporter:
@@ -207,6 +215,7 @@ def setup_tracing(app=None) -> Optional[TracerProvider]:
     # Debug: Also add console exporter to verify spans are being created
     if os.getenv("OTEL_DEBUG_CONSOLE", "false").lower() == "true":
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
         console_processor = SimpleSpanProcessor(ConsoleSpanExporter())
         provider.add_span_processor(console_processor)
         logger.info("Added debug console span processor")
@@ -233,13 +242,6 @@ def _instrument_libraries(app=None):
             logger.info("Instrumented FastAPI app")
         except Exception as e:
             logger.warning(f"FastAPI instrumentation failed: {e}")
-
-    # AsyncPG (PostgreSQL) instrumentation
-    try:
-        AsyncPGInstrumentor().instrument()
-        logger.info("Instrumented asyncpg")
-    except Exception as e:
-        logger.warning(f"Failed to instrument asyncpg: {e}")
 
     # HTTPX (HTTP client) instrumentation
     try:

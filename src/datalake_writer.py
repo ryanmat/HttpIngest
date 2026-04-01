@@ -25,11 +25,8 @@ from azure.identity import DefaultAzureCredential
 from azure.storage.filedatalake import DataLakeServiceClient
 
 from src.otlp_parser import (
-    DatasourceData,
     MetricDataPoint,
-    MetricDefinitionData,
     ParsedOTLP,
-    ResourceData,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,53 +46,62 @@ def _sanitize_float(value: Optional[float]) -> Optional[float]:
 
 
 # Parquet schema for metric data
-METRIC_DATA_SCHEMA = pa.schema([
-    pa.field('resource_hash', pa.string()),
-    pa.field('datasource_name', pa.string()),
-    pa.field('metric_name', pa.string()),
-    pa.field('timestamp', pa.timestamp('us', tz='UTC')),
-    pa.field('value_double', pa.float64()),
-    pa.field('value_int', pa.int64()),
-    pa.field('attributes', pa.string()),
-    pa.field('ingested_at', pa.timestamp('us', tz='UTC')),
-    pa.field('year', pa.int16()),
-    pa.field('month', pa.int8()),
-    pa.field('day', pa.int8()),
-    pa.field('hour', pa.int8()),
-])
+METRIC_DATA_SCHEMA = pa.schema(
+    [
+        pa.field("resource_hash", pa.string()),
+        pa.field("datasource_name", pa.string()),
+        pa.field("metric_name", pa.string()),
+        pa.field("timestamp", pa.timestamp("us", tz="UTC")),
+        pa.field("value_double", pa.float64()),
+        pa.field("value_int", pa.int64()),
+        pa.field("attributes", pa.string()),
+        pa.field("ingested_at", pa.timestamp("us", tz="UTC")),
+        pa.field("year", pa.int16()),
+        pa.field("month", pa.int8()),
+        pa.field("day", pa.int8()),
+        pa.field("hour", pa.int8()),
+    ]
+)
 
-RESOURCES_SCHEMA = pa.schema([
-    pa.field('resource_hash', pa.string()),
-    pa.field('attributes', pa.string()),
-    pa.field('created_at', pa.timestamp('us', tz='UTC')),
-    pa.field('updated_at', pa.timestamp('us', tz='UTC')),
-])
+RESOURCES_SCHEMA = pa.schema(
+    [
+        pa.field("resource_hash", pa.string()),
+        pa.field("attributes", pa.string()),
+        pa.field("created_at", pa.timestamp("us", tz="UTC")),
+        pa.field("updated_at", pa.timestamp("us", tz="UTC")),
+    ]
+)
 
-DATASOURCES_SCHEMA = pa.schema([
-    pa.field('name', pa.string()),
-    pa.field('version', pa.string()),
-    pa.field('created_at', pa.timestamp('us', tz='UTC')),
-])
+DATASOURCES_SCHEMA = pa.schema(
+    [
+        pa.field("name", pa.string()),
+        pa.field("version", pa.string()),
+        pa.field("created_at", pa.timestamp("us", tz="UTC")),
+    ]
+)
 
-METRIC_DEFINITIONS_SCHEMA = pa.schema([
-    pa.field('datasource_name', pa.string()),
-    pa.field('datasource_version', pa.string()),
-    pa.field('name', pa.string()),
-    pa.field('unit', pa.string()),
-    pa.field('metric_type', pa.string()),
-    pa.field('description', pa.string()),
-    pa.field('created_at', pa.timestamp('us', tz='UTC')),
-])
+METRIC_DEFINITIONS_SCHEMA = pa.schema(
+    [
+        pa.field("datasource_name", pa.string()),
+        pa.field("datasource_version", pa.string()),
+        pa.field("name", pa.string()),
+        pa.field("unit", pa.string()),
+        pa.field("metric_type", pa.string()),
+        pa.field("description", pa.string()),
+        pa.field("created_at", pa.timestamp("us", tz="UTC")),
+    ]
+)
 
 
 @dataclass
 class DataLakeConfig:
     """Configuration for Data Lake connection."""
+
     account_name: str
     filesystem: str
     base_path: str = "otlp"
-    flush_interval_seconds: int = 60
-    flush_threshold_rows: int = 10000
+    flush_interval_seconds: int = 600
+    flush_threshold_rows: int = 50000
 
     @classmethod
     def from_env(cls) -> "DataLakeConfig":
@@ -104,8 +110,12 @@ class DataLakeConfig:
             account_name=os.getenv("DATALAKE_ACCOUNT", "stlmingestdatalake"),
             filesystem=os.getenv("DATALAKE_FILESYSTEM", "metrics"),
             base_path=os.getenv("DATALAKE_BASE_PATH", "otlp"),
-            flush_interval_seconds=int(os.getenv("DATALAKE_FLUSH_INTERVAL_SECONDS", "60")),
-            flush_threshold_rows=int(os.getenv("DATALAKE_FLUSH_THRESHOLD_ROWS", "10000")),
+            flush_interval_seconds=int(
+                os.getenv("DATALAKE_FLUSH_INTERVAL_SECONDS", "600")
+            ),
+            flush_threshold_rows=int(
+                os.getenv("DATALAKE_FLUSH_THRESHOLD_ROWS", "50000")
+            ),
         )
 
 
@@ -133,7 +143,7 @@ class DataLakeWriter:
             self._credential = DefaultAzureCredential()
             self._service_client = DataLakeServiceClient(
                 account_url=f"https://{self.config.account_name}.dfs.core.windows.net",
-                credential=self._credential
+                credential=self._credential,
             )
         return self._service_client
 
@@ -154,10 +164,10 @@ class DataLakeWriter:
             for resource in parsed.resources:
                 if resource.resource_hash not in self.resource_buffer:
                     self.resource_buffer[resource.resource_hash] = {
-                        'resource_hash': resource.resource_hash,
-                        'attributes': json.dumps(resource.attributes),
-                        'created_at': now,
-                        'updated_at': now,
+                        "resource_hash": resource.resource_hash,
+                        "attributes": json.dumps(resource.attributes),
+                        "created_at": now,
+                        "updated_at": now,
                     }
 
             # Buffer datasources (deduplicate by name+version)
@@ -165,9 +175,9 @@ class DataLakeWriter:
                 key = f"{ds.name}|{ds.version or ''}"
                 if key not in self.datasource_buffer:
                     self.datasource_buffer[key] = {
-                        'name': ds.name,
-                        'version': ds.version,
-                        'created_at': now,
+                        "name": ds.name,
+                        "version": ds.version,
+                        "created_at": now,
                     }
 
             # Buffer metric definitions (deduplicate by datasource+name)
@@ -175,13 +185,13 @@ class DataLakeWriter:
                 key = f"{md.datasource_name}|{md.datasource_version or ''}|{md.name}"
                 if key not in self.metric_def_buffer:
                     self.metric_def_buffer[key] = {
-                        'datasource_name': md.datasource_name,
-                        'datasource_version': md.datasource_version,
-                        'name': md.name,
-                        'unit': md.unit,
-                        'metric_type': md.metric_type,
-                        'description': md.description,
-                        'created_at': now,
+                        "datasource_name": md.datasource_name,
+                        "datasource_version": md.datasource_version,
+                        "name": md.name,
+                        "unit": md.unit,
+                        "metric_type": md.metric_type,
+                        "description": md.description,
+                        "created_at": now,
                     }
 
             # Buffer metric data points
@@ -237,13 +247,17 @@ class DataLakeWriter:
         # Group by partition (year/month/day/hour)
         partitions: Dict[str, List[Dict]] = {}
         for row in self.metric_buffer:
-            ts = row['timestamp']
+            ts = row["timestamp"]
             # Handle both datetime objects and timestamps
             if isinstance(ts, datetime):
                 key = f"year={ts.year}/month={ts.month:02d}/day={ts.day:02d}/hour={ts.hour:02d}"
             else:
                 # Assume it's already a valid timestamp
-                dt = ts if isinstance(ts, datetime) else datetime.fromtimestamp(ts / 1e6, tz=timezone.utc)
+                dt = (
+                    ts
+                    if isinstance(ts, datetime)
+                    else datetime.fromtimestamp(ts / 1e6, tz=timezone.utc)
+                )
                 key = f"year={dt.year}/month={dt.month:02d}/day={dt.day:02d}/hour={dt.hour:02d}"
             partitions.setdefault(key, []).append(row)
 
@@ -254,16 +268,20 @@ class DataLakeWriter:
 
             # Write to buffer
             buffer = BytesIO()
-            pq.write_table(table, buffer, compression='snappy')
+            pq.write_table(table, buffer, compression="snappy")
             buffer.seek(0)
 
             # Generate unique filename
             filename = f"part-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}.parquet"
-            full_path = f"{self.config.base_path}/metric_data/{partition_path}/{filename}"
+            full_path = (
+                f"{self.config.base_path}/metric_data/{partition_path}/{filename}"
+            )
 
             # Upload to Data Lake
             file_client = fs_client.get_file_client(full_path)
-            file_client.upload_data(buffer.getvalue(), overwrite=True)
+            await asyncio.to_thread(
+                file_client.upload_data, buffer.getvalue(), overwrite=True
+            )
 
             written += len(rows)
             logger.info(f"Wrote {len(rows)} metric records to {full_path}")
@@ -280,7 +298,7 @@ class DataLakeWriter:
         table = pa.Table.from_pylist(rows, schema=RESOURCES_SCHEMA)
 
         buffer = BytesIO()
-        pq.write_table(table, buffer, compression='snappy')
+        pq.write_table(table, buffer, compression="snappy")
         buffer.seek(0)
 
         filename = f"resources-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}.parquet"
@@ -301,7 +319,7 @@ class DataLakeWriter:
         table = pa.Table.from_pylist(rows, schema=DATASOURCES_SCHEMA)
 
         buffer = BytesIO()
-        pq.write_table(table, buffer, compression='snappy')
+        pq.write_table(table, buffer, compression="snappy")
         buffer.seek(0)
 
         filename = f"datasources-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}.parquet"
@@ -322,7 +340,7 @@ class DataLakeWriter:
         table = pa.Table.from_pylist(rows, schema=METRIC_DEFINITIONS_SCHEMA)
 
         buffer = BytesIO()
-        pq.write_table(table, buffer, compression='snappy')
+        pq.write_table(table, buffer, compression="snappy")
         buffer.seek(0)
 
         filename = f"metric_definitions-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}.parquet"
@@ -334,33 +352,35 @@ class DataLakeWriter:
         logger.info(f"Wrote {len(rows)} metric definitions to {full_path}")
         self.metric_def_buffer.clear()
 
-    def _datapoint_to_dict(self, dp: MetricDataPoint, ingested_at: datetime) -> Dict[str, Any]:
+    def _datapoint_to_dict(
+        self, dp: MetricDataPoint, ingested_at: datetime
+    ) -> Dict[str, Any]:
         """Convert MetricDataPoint to dictionary for Parquet.
 
         Sanitizes float values to remove NaN/Infinity which Synapse cannot query.
         """
         ts = dp.timestamp
         return {
-            'resource_hash': dp.resource_hash,
-            'datasource_name': dp.datasource_name,
-            'metric_name': dp.metric_name,
-            'timestamp': ts,
-            'value_double': _sanitize_float(dp.value_double),
-            'value_int': dp.value_int,
-            'attributes': json.dumps(dp.attributes) if dp.attributes else None,
-            'ingested_at': ingested_at,
-            'year': ts.year,
-            'month': ts.month,
-            'day': ts.day,
-            'hour': ts.hour,
+            "resource_hash": dp.resource_hash,
+            "datasource_name": dp.datasource_name,
+            "metric_name": dp.metric_name,
+            "timestamp": ts,
+            "value_double": _sanitize_float(dp.value_double),
+            "value_int": dp.value_int,
+            "attributes": json.dumps(dp.attributes) if dp.attributes else None,
+            "ingested_at": ingested_at,
+            "year": ts.year,
+            "month": ts.month,
+            "day": ts.day,
+            "hour": ts.hour,
         }
 
     def get_buffer_stats(self) -> Dict[str, int]:
         """Get current buffer statistics."""
         return {
-            'metric_data_buffered': len(self.metric_buffer),
-            'resources_buffered': len(self.resource_buffer),
-            'datasources_buffered': len(self.datasource_buffer),
-            'metric_definitions_buffered': len(self.metric_def_buffer),
-            'flush_threshold': self.config.flush_threshold_rows,
+            "metric_data_buffered": len(self.metric_buffer),
+            "resources_buffered": len(self.resource_buffer),
+            "datasources_buffered": len(self.datasource_buffer),
+            "metric_definitions_buffered": len(self.metric_def_buffer),
+            "flush_threshold": self.config.flush_threshold_rows,
         }
