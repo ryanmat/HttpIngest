@@ -1,0 +1,23 @@
+{
+  "resourceMetrics": [{
+    "resource": {
+      "attributes": [
+        {"key": "service.name", "value": {"stringValue": "web-server"}},
+        {"key": "host.name", "value": {"stringValue": "server01"}}
+      ]
+    },
+    "scopeMetrics": [{
+      "scope": {"name": "CPU_Usage", "version": "1.0"},
+      "metrics": [{
+        "name": "cpu.usage",
+        "unit": "percent",
+        "gauge": {
+          "dataPoints": [{
+            "timeUnixNano": 1699123456000000000,
+            "asDouble": 45.2
+          }]
+        }
+      }]
+    }]
+  }]
+}
