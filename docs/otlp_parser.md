@@ -9,7 +9,7 @@ from OTLP JSON payloads into structured data ready for storage.
 
  **Pure Functions** - No side effects, easy to test
  **Type Safety** - Uses dataclasses for structured output
- **Complete Parsing** - Handles resources, datasources, metrics, and time-series data
+ **Complete Parsing** - Handles resources, scopes, metrics, and time-series data
  **Flexible** - Supports all OTLP metric types (gauge, sum, histogram, etc.)
  **Timestamp Conversion** - Converts nanosecond timestamps to Python datetime
  **Deduplication** - Built-in deduplication helpers
@@ -32,7 +32,7 @@ result = parse_otlp(otlp_payload)
 
 # Access parsed data
 print(f"Found {len(result.resources)} resources")
-print(f"Found {len(result.datasources)} datasources")
+print(f"Found {len(result.scopes)} scopes")
 print(f"Found {len(result.metric_definitions)} metric definitions")
 print(f"Found {len(result.metric_data)} data points")
 ```
@@ -45,7 +45,7 @@ The `parse_otlp()` function returns a `ParsedOTLP` object with:
 @dataclass
 class ParsedOTLP:
     resources: List[ResourceData]
-    datasources: List[DatasourceData]
+    scopes: List[ScopeData]
     metric_definitions: List[MetricDefinitionData]
     metric_data: List[MetricDataPoint]
 ```
@@ -73,18 +73,18 @@ ResourceData(
 )
 ```
 
-### DatasourceData
+### ScopeData
 
 ```python
 @dataclass
-class DatasourceData:
-    name: str                   # Datasource name (e.g., "CPU_Usage")
-    version: Optional[str]      # Datasource version
+class ScopeData:
+    name: str                   # Scope name (e.g., "CPU_Usage")
+    version: Optional[str]      # Scope version
 ```
 
 **Example:**
 ```python
-DatasourceData(
+ScopeData(
     name="CPU_Usage",
     version="1.0"
 )
@@ -95,8 +95,8 @@ DatasourceData(
 ```python
 @dataclass
 class MetricDefinitionData:
-    datasource_name: str
-    datasource_version: Optional[str]
+    scope_name: str
+    scope_version: Optional[str]
     name: str                   # Metric name (e.g., "cpu.usage")
     unit: Optional[str]         # Unit (e.g., "percent", "bytes")
     metric_type: str            # Type: gauge, sum, histogram, etc.
@@ -106,8 +106,8 @@ class MetricDefinitionData:
 **Example:**
 ```python
 MetricDefinitionData(
-    datasource_name="CPU_Usage",
-    datasource_version="1.0",
+    scope_name="CPU_Usage",
+    scope_version="1.0",
     name="cpu.usage",
     unit="percent",
     metric_type="gauge",
@@ -121,8 +121,8 @@ MetricDefinitionData(
 @dataclass
 class MetricDataPoint:
     resource_hash: str
-    datasource_name: str
-    datasource_version: Optional[str]
+    scope_name: str
+    scope_version: Optional[str]
     metric_name: str
     timestamp: datetime         # Converted from nanoseconds
     value_double: Optional[float]
@@ -134,8 +134,8 @@ class MetricDataPoint:
 ```python
 MetricDataPoint(
     resource_hash="a3f2...",
-    datasource_name="CPU_Usage",
-    datasource_version="1.0",
+    scope_name="CPU_Usage",
+    scope_version="1.0",
     metric_name="cpu.usage",
     timestamp=datetime(2023, 11, 4, 12, 30, 56, tzinfo=timezone.utc),
     value_double=45.2,
@@ -242,13 +242,13 @@ timestamp = convert_nano_timestamp(1699123456000000000)
 
 Remove duplicate resources by hash.
 
-#### `deduplicate_datasources(datasources: List[DatasourceData]) -> List[DatasourceData]`
+#### `deduplicate_scopes(scopes: List[ScopeData]) -> List[ScopeData]`
 
-Remove duplicate datasources by (name, version).
+Remove duplicate scopes by (name, version).
 
 #### `deduplicate_metric_definitions(metric_defs: List[MetricDefinitionData]) -> List[MetricDefinitionData]`
 
-Remove duplicate metric definitions by (datasource_name, datasource_version, name).
+Remove duplicate metric definitions by (scope_name, scope_version, name).
 
 ## Testing
 
@@ -338,7 +338,7 @@ except ValueError as e:
 To support new OTLP metric types:
 
 ```python
-def parse_metric(metric, resource_hash, datasource_name, datasource_version):
+def parse_metric(metric, resource_hash, scope_name, scope_version):
     # ... existing code ...
 
     elif 'newMetricType' in metric:

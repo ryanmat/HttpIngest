@@ -8,7 +8,7 @@ Parses OTLP JSON payloads into structured data ready for storage.
 
 The parser handles:
 - Resource attributes (device/service information)
-- Datasource metadata (scopes)
+- Instrumentation scope metadata (name, version)
 - Metric definitions (names, types, units)
 - Time-series data points (gauge, sum, histogram, etc.)
 
@@ -31,8 +31,8 @@ class ResourceData:
 
 
 @dataclass
-class DatasourceData:
-    """Represents a parsed OTLP datasource (scope)."""
+class ScopeData:
+    """Represents a parsed OTLP instrumentation scope."""
 
     name: str
     version: str | None
@@ -42,8 +42,8 @@ class DatasourceData:
 class MetricDefinitionData:
     """Represents a parsed metric definition."""
 
-    datasource_name: str
-    datasource_version: str | None
+    scope_name: str
+    scope_version: str | None
     name: str
     unit: str | None
     metric_type: str
@@ -55,8 +55,8 @@ class MetricDataPoint:
     """Represents a parsed time-series data point."""
 
     resource_hash: str
-    datasource_name: str
-    datasource_version: str | None
+    scope_name: str
+    scope_version: str | None
     metric_name: str
     timestamp: datetime
     value_double: float | None
@@ -69,7 +69,7 @@ class ParsedOTLP:
     """Complete parsed OTLP data structure."""
 
     resources: list[ResourceData]
-    datasources: list[DatasourceData]
+    scopes: list[ScopeData]
     metric_definitions: list[MetricDefinitionData]
     metric_data: list[MetricDataPoint]
 
@@ -77,7 +77,7 @@ class ParsedOTLP:
         """Convert to dictionary for easier testing/serialization."""
         return {
             "resources": [asdict(r) for r in self.resources],
-            "datasources": [asdict(d) for d in self.datasources],
+            "scopes": [asdict(d) for d in self.scopes],
             "metric_definitions": [asdict(m) for m in self.metric_definitions],
             "metric_data": [asdict(m) for m in self.metric_data],
         }
@@ -179,8 +179,8 @@ def convert_nano_timestamp(time_unix_nano) -> datetime:
 def parse_data_point(
     data_point: dict[str, Any],
     resource_hash: str,
-    datasource_name: str,
-    datasource_version: str | None,
+    scope_name: str,
+    scope_version: str | None,
     metric_name: str,
 ) -> MetricDataPoint:
     """
@@ -189,8 +189,8 @@ def parse_data_point(
     Args:
         data_point: OTLP data point object
         resource_hash: Hash of the resource this point belongs to
-        datasource_name: Name of the datasource
-        datasource_version: Version of the datasource
+        scope_name: Name of the scope
+        scope_version: Version of the scope
         metric_name: Name of the metric
 
     Returns:
@@ -222,8 +222,8 @@ def parse_data_point(
 
     return MetricDataPoint(
         resource_hash=resource_hash,
-        datasource_name=datasource_name,
-        datasource_version=datasource_version,
+        scope_name=scope_name,
+        scope_version=scope_version,
         metric_name=metric_name,
         timestamp=timestamp,
         value_double=value_double,
@@ -235,8 +235,8 @@ def parse_data_point(
 def parse_metric(
     metric: dict[str, Any],
     resource_hash: str,
-    datasource_name: str,
-    datasource_version: str | None,
+    scope_name: str,
+    scope_version: str | None,
 ) -> tuple[MetricDefinitionData, list[MetricDataPoint]]:
     """
     Parse an OTLP metric and its data points.
@@ -244,8 +244,8 @@ def parse_metric(
     Args:
         metric: OTLP metric object
         resource_hash: Hash of the resource
-        datasource_name: Name of the datasource
-        datasource_version: Version of the datasource
+        scope_name: Name of the scope
+        scope_version: Version of the scope
 
     Returns:
         Tuple of (MetricDefinitionData, list of MetricDataPoints)
@@ -280,13 +280,13 @@ def parse_metric(
     # Parse data points
     for dp in data_points_raw:
         data_points.append(
-            parse_data_point(dp, resource_hash, datasource_name, datasource_version, metric_name)
+            parse_data_point(dp, resource_hash, scope_name, scope_version, metric_name)
         )
 
     # Create metric definition
     metric_def = MetricDefinitionData(
-        datasource_name=datasource_name,
-        datasource_version=datasource_version,
+        scope_name=scope_name,
+        scope_version=scope_version,
         name=metric_name,
         unit=unit,
         metric_type=metric_type,
@@ -298,43 +298,41 @@ def parse_metric(
 
 def parse_scope_metrics(
     scope_metrics: dict[str, Any], resource_hash: str
-) -> tuple[DatasourceData, list[MetricDefinitionData], list[MetricDataPoint]]:
+) -> tuple[ScopeData, list[MetricDefinitionData], list[MetricDataPoint]]:
     """
-    Parse OTLP scopeMetrics (datasource and its metrics).
+    Parse OTLP scopeMetrics (scope and its metrics).
 
     Args:
         scope_metrics: OTLP scopeMetrics object
         resource_hash: Hash of the resource
 
     Returns:
-        Tuple of (DatasourceData, list of MetricDefinitionData, list of MetricDataPoints)
+        Tuple of (ScopeData, list of MetricDefinitionData, list of MetricDataPoints)
     """
-    # Extract scope (datasource) information
+    # Extract scope information
     scope = scope_metrics.get("scope", {})
-    datasource_name = scope.get("name", "unknown")
-    datasource_version = scope.get("version")
+    scope_name = scope.get("name", "unknown")
+    scope_version = scope.get("version")
 
-    datasource = DatasourceData(name=datasource_name, version=datasource_version)
+    scope_data = ScopeData(name=scope_name, version=scope_version)
 
     # Parse all metrics in this scope
     all_metric_defs = []
     all_data_points = []
 
     for metric in scope_metrics.get("metrics", []):
-        metric_def, data_points = parse_metric(
-            metric, resource_hash, datasource_name, datasource_version
-        )
+        metric_def, data_points = parse_metric(metric, resource_hash, scope_name, scope_version)
         all_metric_defs.append(metric_def)
         all_data_points.extend(data_points)
 
-    return datasource, all_metric_defs, all_data_points
+    return scope_data, all_metric_defs, all_data_points
 
 
 def parse_resource_metrics(
     resource_metrics: dict[str, Any],
 ) -> tuple[
     ResourceData,
-    list[DatasourceData],
+    list[ScopeData],
     list[MetricDefinitionData],
     list[MetricDataPoint],
 ]:
@@ -345,7 +343,7 @@ def parse_resource_metrics(
         resource_metrics: OTLP resourceMetrics object
 
     Returns:
-        Tuple of (ResourceData, list of DatasourceData,
+        Tuple of (ResourceData, list of ScopeData,
         list of MetricDefinitionData, list of MetricDataPoints)
     """
     # Parse resource
@@ -356,17 +354,17 @@ def parse_resource_metrics(
     resource_data = ResourceData(resource_hash=resource_hash, attributes=attributes)
 
     # Parse all scope metrics
-    all_datasources = []
+    all_scopes = []
     all_metric_defs = []
     all_data_points = []
 
     for scope_metrics in resource_metrics.get("scopeMetrics", []):
-        datasource, metric_defs, data_points = parse_scope_metrics(scope_metrics, resource_hash)
-        all_datasources.append(datasource)
+        scope, metric_defs, data_points = parse_scope_metrics(scope_metrics, resource_hash)
+        all_scopes.append(scope)
         all_metric_defs.extend(metric_defs)
         all_data_points.extend(data_points)
 
-    return resource_data, all_datasources, all_metric_defs, all_data_points
+    return resource_data, all_scopes, all_metric_defs, all_data_points
 
 
 def parse_otlp(otlp_payload: dict[str, Any]) -> ParsedOTLP:
@@ -391,22 +389,22 @@ def parse_otlp(otlp_payload: dict[str, Any]) -> ParsedOTLP:
         raise ValueError("OTLP payload missing 'resourceMetrics' field")
 
     all_resources = []
-    all_datasources = []
+    all_scopes = []
     all_metric_defs = []
     all_data_points = []
 
     # Parse each resourceMetrics entry
     for resource_metrics in otlp_payload.get("resourceMetrics", []):
-        resource, datasources, metric_defs, data_points = parse_resource_metrics(resource_metrics)
+        resource, scopes, metric_defs, data_points = parse_resource_metrics(resource_metrics)
 
         all_resources.append(resource)
-        all_datasources.extend(datasources)
+        all_scopes.extend(scopes)
         all_metric_defs.extend(metric_defs)
         all_data_points.extend(data_points)
 
     return ParsedOTLP(
         resources=all_resources,
-        datasources=all_datasources,
+        scopes=all_scopes,
         metric_definitions=all_metric_defs,
         metric_data=all_data_points,
     )
@@ -433,33 +431,33 @@ def deduplicate_resources(resources: list[ResourceData]) -> list[ResourceData]:
     return unique_resources
 
 
-def deduplicate_datasources(datasources: list[DatasourceData]) -> list[DatasourceData]:
+def deduplicate_scopes(scopes: list[ScopeData]) -> list[ScopeData]:
     """
-    Deduplicate datasources by (name, version).
+    Deduplicate scopes by (name, version).
 
     Args:
-        datasources: List of DatasourceData objects
+        scopes: List of ScopeData objects
 
     Returns:
-        Deduplicated list of DatasourceData
+        Deduplicated list of ScopeData
     """
-    seen_datasources = set()
-    unique_datasources = []
+    seen_scopes = set()
+    unique_scopes = []
 
-    for datasource in datasources:
-        key = (datasource.name, datasource.version)
-        if key not in seen_datasources:
-            seen_datasources.add(key)
-            unique_datasources.append(datasource)
+    for scope in scopes:
+        key = (scope.name, scope.version)
+        if key not in seen_scopes:
+            seen_scopes.add(key)
+            unique_scopes.append(scope)
 
-    return unique_datasources
+    return unique_scopes
 
 
 def deduplicate_metric_definitions(
     metric_defs: list[MetricDefinitionData],
 ) -> list[MetricDefinitionData]:
     """
-    Deduplicate metric definitions by (datasource_name, datasource_version, name).
+    Deduplicate metric definitions by (scope_name, scope_version, name).
 
     Args:
         metric_defs: List of MetricDefinitionData objects
@@ -472,8 +470,8 @@ def deduplicate_metric_definitions(
 
     for metric_def in metric_defs:
         key = (
-            metric_def.datasource_name,
-            metric_def.datasource_version,
+            metric_def.scope_name,
+            metric_def.scope_version,
             metric_def.name,
         )
         if key not in seen_metrics:

@@ -22,11 +22,11 @@ from src.datalake_writer import (
 )
 from src.ingestion_router import IngestionConfig, IngestionRouter, IngestionStats
 from src.otlp_parser import (
-    DatasourceData,
     MetricDataPoint,
     MetricDefinitionData,
     ParsedOTLP,
     ResourceData,
+    ScopeData,
 )
 
 
@@ -95,8 +95,8 @@ class TestDataLakeWriter:
         now = datetime.now(UTC)
         dp = MetricDataPoint(
             resource_hash="abc123",
-            datasource_name="test-ds",
-            datasource_version="1.0",
+            scope_name="test-ds",
+            scope_version="1.0",
             metric_name="cpu.usage",
             timestamp=now,
             value_double=42.5,
@@ -107,7 +107,7 @@ class TestDataLakeWriter:
         result = writer._datapoint_to_dict(dp, now)
 
         assert result["resource_hash"] == "abc123"
-        assert result["datasource_name"] == "test-ds"
+        assert result["scope_name"] == "test-ds"
         assert result["metric_name"] == "cpu.usage"
         assert result["timestamp"] == now
         assert result["value_double"] == 42.5
@@ -123,8 +123,8 @@ class TestDataLakeWriter:
         now = datetime.now(UTC)
         dp = MetricDataPoint(
             resource_hash="abc123",
-            datasource_name="test-ds",
-            datasource_version="1.0",
+            scope_name="test-ds",
+            scope_version="1.0",
             metric_name="cpu.usage",
             timestamp=now,
             value_double=None,
@@ -142,8 +142,8 @@ class TestDataLakeWriter:
         now = datetime.now(UTC)
         dp = MetricDataPoint(
             resource_hash="abc123",
-            datasource_name="test-ds",
-            datasource_version="1.0",
+            scope_name="test-ds",
+            scope_version="1.0",
             metric_name="cpu.usage",
             timestamp=now,
             value_double=float("nan"),
@@ -160,8 +160,8 @@ class TestDataLakeWriter:
         now = datetime.now(UTC)
         dp = MetricDataPoint(
             resource_hash="abc123",
-            datasource_name="test-ds",
-            datasource_version="1.0",
+            scope_name="test-ds",
+            scope_version="1.0",
             metric_name="cpu.usage",
             timestamp=now,
             value_double=float("inf"),
@@ -179,7 +179,7 @@ class TestDataLakeWriter:
 
         assert stats["metric_data_buffered"] == 0
         assert stats["resources_buffered"] == 0
-        assert stats["datasources_buffered"] == 0
+        assert stats["scopes_buffered"] == 0
         assert stats["metric_definitions_buffered"] == 0
         assert stats["flush_threshold"] == 100
 
@@ -189,11 +189,11 @@ class TestDataLakeWriter:
         now = datetime.now(UTC)
         parsed = ParsedOTLP(
             resources=[ResourceData(resource_hash="res1", attributes={"service": "test"})],
-            datasources=[DatasourceData(name="ds1", version="1.0")],
+            scopes=[ScopeData(name="ds1", version="1.0")],
             metric_definitions=[
                 MetricDefinitionData(
-                    datasource_name="ds1",
-                    datasource_version="1.0",
+                    scope_name="ds1",
+                    scope_version="1.0",
                     name="metric1",
                     unit="1",
                     metric_type="gauge",
@@ -203,8 +203,8 @@ class TestDataLakeWriter:
             metric_data=[
                 MetricDataPoint(
                     resource_hash="res1",
-                    datasource_name="ds1",
-                    datasource_version="1.0",
+                    scope_name="ds1",
+                    scope_version="1.0",
                     metric_name="metric1",
                     timestamp=now,
                     value_double=42.0,
@@ -220,7 +220,7 @@ class TestDataLakeWriter:
         stats = writer.get_buffer_stats()
         assert stats["metric_data_buffered"] == 1
         assert stats["resources_buffered"] == 1
-        assert stats["datasources_buffered"] == 1
+        assert stats["scopes_buffered"] == 1
         assert stats["metric_definitions_buffered"] == 1
 
     @pytest.mark.asyncio
@@ -229,7 +229,7 @@ class TestDataLakeWriter:
         for _ in range(2):
             parsed = ParsedOTLP(
                 resources=[ResourceData(resource_hash="same-hash", attributes={"service": "test"})],
-                datasources=[],
+                scopes=[],
                 metric_definitions=[],
                 metric_data=[],
             )
@@ -243,7 +243,7 @@ class TestDataLakeWriter:
         field_names = [f.name for f in METRIC_DATA_SCHEMA]
 
         assert "resource_hash" in field_names
-        assert "datasource_name" in field_names
+        assert "scope_name" in field_names
         assert "metric_name" in field_names
         assert "timestamp" in field_names
         assert "value_double" in field_names
@@ -284,7 +284,7 @@ class TestIngestionStats:
         """Test IngestionStats.to_dict()."""
         stats = IngestionStats(
             resources=5,
-            datasources=2,
+            scopes=2,
             metric_definitions=10,
             metric_data=100,
             datalake_written=100,
@@ -294,7 +294,7 @@ class TestIngestionStats:
         result = stats.to_dict()
 
         assert result["resources"] == 5
-        assert result["datasources"] == 2
+        assert result["scopes"] == 2
         assert result["metric_definitions"] == 10
         assert result["metric_data"] == 100
         assert result["datalake_written"] == 100
@@ -304,7 +304,7 @@ class TestIngestionStats:
         """Test IngestionStats.to_dict() with errors."""
         stats = IngestionStats(
             resources=0,
-            datasources=0,
+            scopes=0,
             metric_definitions=0,
             metric_data=0,
             datalake_written=0,
@@ -378,7 +378,7 @@ class TestIngestionRouter:
         stats = await router.ingest(payload)
 
         assert stats.resources == 1
-        assert stats.datasources == 1
+        assert stats.scopes == 1
         assert stats.metric_definitions == 1
         assert stats.metric_data == 1
         assert stats.datalake_written == 10

@@ -15,9 +15,9 @@ from typing import Any
 
 from src.datalake_writer import DataLakeWriter
 from src.otlp_parser import (
-    deduplicate_datasources,
     deduplicate_metric_definitions,
     deduplicate_resources,
+    deduplicate_scopes,
     parse_otlp,
 )
 
@@ -43,7 +43,7 @@ class IngestionStats:
     """Statistics from an ingestion operation."""
 
     resources: int
-    datasources: int
+    scopes: int
     metric_definitions: int
     metric_data: int
     datalake_written: int
@@ -53,7 +53,7 @@ class IngestionStats:
         """Convert to dictionary."""
         return {
             "resources": self.resources,
-            "datasources": self.datasources,
+            "scopes": self.scopes,
             "metric_definitions": self.metric_definitions,
             "metric_data": self.metric_data,
             "datalake_written": self.datalake_written,
@@ -94,7 +94,7 @@ class IngestionRouter:
             logger.error(f"Failed to parse OTLP payload: {e}")
             return IngestionStats(
                 resources=0,
-                datasources=0,
+                scopes=0,
                 metric_definitions=0,
                 metric_data=0,
                 datalake_written=0,
@@ -103,12 +103,12 @@ class IngestionRouter:
 
         # Deduplicate
         unique_resources = deduplicate_resources(parsed.resources)
-        unique_datasources = deduplicate_datasources(parsed.datasources)
+        unique_scopes = deduplicate_scopes(parsed.scopes)
         unique_metric_defs = deduplicate_metric_definitions(parsed.metric_definitions)
 
         stats = IngestionStats(
             resources=len(unique_resources),
-            datasources=len(unique_datasources),
+            scopes=len(unique_scopes),
             metric_definitions=len(unique_metric_defs),
             metric_data=len(parsed.metric_data),
             datalake_written=0,

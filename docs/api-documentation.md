@@ -115,7 +115,7 @@ Content-Encoding: gzip                      # optional, recommended for >1 KB
   "status": "success",
   "stats": {
     "resources": 1,
-    "datasources": 1,
+    "scopes": 1,
     "metric_definitions": 1,
     "metric_data": 1,
     "datalake_written": 1,
@@ -168,7 +168,7 @@ Detailed health probe with per-component status.
       "buffer": {
         "metric_data_buffered": 1024,
         "resources_buffered": 64,
-        "datasources_buffered": 16,
+        "scopes_buffered": 16,
         "metric_definitions_buffered": 256,
         "flush_threshold": 50000
       }

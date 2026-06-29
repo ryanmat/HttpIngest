@@ -49,7 +49,7 @@ def _sanitize_float(value: float | None) -> float | None:
 METRIC_DATA_SCHEMA = pa.schema(
     [
         pa.field("resource_hash", pa.string()),
-        pa.field("datasource_name", pa.string()),
+        pa.field("scope_name", pa.string()),
         pa.field("metric_name", pa.string()),
         pa.field("timestamp", pa.timestamp("us", tz="UTC")),
         pa.field("value_double", pa.float64()),
@@ -72,7 +72,7 @@ RESOURCES_SCHEMA = pa.schema(
     ]
 )
 
-DATASOURCES_SCHEMA = pa.schema(
+SCOPES_SCHEMA = pa.schema(
     [
         pa.field("name", pa.string()),
         pa.field("version", pa.string()),
@@ -82,8 +82,8 @@ DATASOURCES_SCHEMA = pa.schema(
 
 METRIC_DEFINITIONS_SCHEMA = pa.schema(
     [
-        pa.field("datasource_name", pa.string()),
-        pa.field("datasource_version", pa.string()),
+        pa.field("scope_name", pa.string()),
+        pa.field("scope_version", pa.string()),
         pa.field("name", pa.string()),
         pa.field("unit", pa.string()),
         pa.field("metric_type", pa.string()),
@@ -137,7 +137,7 @@ class DataLakeWriter:
         self.config = config
         self.metric_buffer: list[dict[str, Any]] = []
         self.resource_buffer: dict[str, dict[str, Any]] = {}
-        self.datasource_buffer: dict[str, dict[str, Any]] = {}
+        self.scope_buffer: dict[str, dict[str, Any]] = {}
         self.metric_def_buffer: dict[str, dict[str, Any]] = {}
         self.lock = asyncio.Lock()
         self._service_client: DataLakeServiceClient | None = None
@@ -158,7 +158,7 @@ class DataLakeWriter:
         Buffer metric data for batch writing.
 
         Args:
-            parsed: ParsedOTLP containing resources, datasources, definitions, and data
+            parsed: ParsedOTLP containing resources, scopes, definitions, and data
 
         Returns:
             Number of metric data points buffered
@@ -176,23 +176,23 @@ class DataLakeWriter:
                         "updated_at": now,
                     }
 
-            # Buffer datasources (deduplicate by name+version)
-            for ds in parsed.datasources:
+            # Buffer scopes (deduplicate by name+version)
+            for ds in parsed.scopes:
                 key = f"{ds.name}|{ds.version or ''}"
-                if key not in self.datasource_buffer:
-                    self.datasource_buffer[key] = {
+                if key not in self.scope_buffer:
+                    self.scope_buffer[key] = {
                         "name": ds.name,
                         "version": ds.version,
                         "created_at": now,
                     }
 
-            # Buffer metric definitions (deduplicate by datasource+name)
+            # Buffer metric definitions (deduplicate by scope+name)
             for md in parsed.metric_definitions:
-                key = f"{md.datasource_name}|{md.datasource_version or ''}|{md.name}"
+                key = f"{md.scope_name}|{md.scope_version or ''}|{md.name}"
                 if key not in self.metric_def_buffer:
                     self.metric_def_buffer[key] = {
-                        "datasource_name": md.datasource_name,
-                        "datasource_version": md.datasource_version,
+                        "scope_name": md.scope_name,
+                        "scope_version": md.scope_version,
                         "name": md.name,
                         "unit": md.unit,
                         "metric_type": md.metric_type,
@@ -233,8 +233,8 @@ class DataLakeWriter:
             if self.resource_buffer:
                 await self._flush_resources(fs_client)
 
-            if self.datasource_buffer:
-                await self._flush_datasources(fs_client)
+            if self.scope_buffer:
+                await self._flush_scopes(fs_client)
 
             if self.metric_def_buffer:
                 await self._flush_metric_definitions(fs_client)
@@ -310,27 +310,27 @@ class DataLakeWriter:
         logger.info(f"Wrote {len(rows)} resources to {full_path}")
         self.resource_buffer.clear()
 
-    async def _flush_datasources(self, fs_client) -> None:
-        """Flush datasources buffer."""
-        if not self.datasource_buffer:
+    async def _flush_scopes(self, fs_client) -> None:
+        """Flush scopes buffer."""
+        if not self.scope_buffer:
             return
 
-        rows = list(self.datasource_buffer.values())
-        table = pa.Table.from_pylist(rows, schema=DATASOURCES_SCHEMA)
+        rows = list(self.scope_buffer.values())
+        table = pa.Table.from_pylist(rows, schema=SCOPES_SCHEMA)
 
         buffer = BytesIO()
         pq.write_table(table, buffer, compression="snappy")
         buffer.seek(0)
 
         ts = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-        filename = f"datasources-{ts}-{uuid.uuid4().hex[:8]}.parquet"
-        full_path = f"{self.config.base_path}/datasources/{filename}"
+        filename = f"scopes-{ts}-{uuid.uuid4().hex[:8]}.parquet"
+        full_path = f"{self.config.base_path}/scopes/{filename}"
 
         file_client = fs_client.get_file_client(full_path)
         file_client.upload_data(buffer.getvalue(), overwrite=True)
 
-        logger.info(f"Wrote {len(rows)} datasources to {full_path}")
-        self.datasource_buffer.clear()
+        logger.info(f"Wrote {len(rows)} scopes to {full_path}")
+        self.scope_buffer.clear()
 
     async def _flush_metric_definitions(self, fs_client) -> None:
         """Flush metric definitions buffer."""
@@ -362,7 +362,7 @@ class DataLakeWriter:
         ts = dp.timestamp
         return {
             "resource_hash": dp.resource_hash,
-            "datasource_name": dp.datasource_name,
+            "scope_name": dp.scope_name,
             "metric_name": dp.metric_name,
             "timestamp": ts,
             "value_double": _sanitize_float(dp.value_double),
@@ -380,7 +380,7 @@ class DataLakeWriter:
         return {
             "metric_data_buffered": len(self.metric_buffer),
             "resources_buffered": len(self.resource_buffer),
-            "datasources_buffered": len(self.datasource_buffer),
+            "scopes_buffered": len(self.scope_buffer),
             "metric_definitions_buffered": len(self.metric_def_buffer),
             "flush_threshold": self.config.flush_threshold_rows,
         }

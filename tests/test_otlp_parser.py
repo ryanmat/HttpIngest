@@ -7,15 +7,15 @@ from datetime import UTC, datetime
 import pytest
 
 from src.otlp_parser import (
-    DatasourceData,
     MetricDefinitionData,
     ParsedOTLP,
     ResourceData,
+    ScopeData,
     compute_resource_hash,
     convert_nano_timestamp,
-    deduplicate_datasources,
     deduplicate_metric_definitions,
     deduplicate_resources,
+    deduplicate_scopes,
     extract_attribute_value,
     parse_data_point,
     parse_metric,
@@ -122,8 +122,8 @@ def test_parse_data_point_with_double():
     result = parse_data_point(data_point, "test_hash_123", "CPU_Usage", "1.0", "cpu.usage")
 
     assert result.resource_hash == "test_hash_123"
-    assert result.datasource_name == "CPU_Usage"
-    assert result.datasource_version == "1.0"
+    assert result.scope_name == "CPU_Usage"
+    assert result.scope_version == "1.0"
     assert result.metric_name == "cpu.usage"
     assert result.value_double == 45.2
     assert result.value_int is None
@@ -212,10 +212,10 @@ def test_parse_scope_metrics():
         ],
     }
 
-    datasource, metric_defs, data_points = parse_scope_metrics(scope_metrics, "resource_hash_789")
+    scope, metric_defs, data_points = parse_scope_metrics(scope_metrics, "resource_hash_789")
 
-    assert datasource.name == "CPU_Usage"
-    assert datasource.version == "1.0"
+    assert scope.name == "CPU_Usage"
+    assert scope.version == "1.0"
     assert len(metric_defs) == 1
     assert len(data_points) == 1
 
@@ -245,12 +245,12 @@ def test_parse_resource_metrics():
         ],
     }
 
-    resource, datasources, metric_defs, data_points = parse_resource_metrics(resource_metrics)
+    resource, scopes, metric_defs, data_points = parse_resource_metrics(resource_metrics)
 
     assert resource.attributes["service.name"] == "web-server"
     assert resource.attributes["host.name"] == "server01"
-    assert len(datasources) == 1
-    assert datasources[0].name == "CPU_Usage"
+    assert len(scopes) == 1
+    assert scopes[0].name == "CPU_Usage"
     assert len(metric_defs) == 1
     assert len(data_points) == 1
 
@@ -261,7 +261,7 @@ def test_parse_otlp_with_sample_data(sample_otlp_cpu_metrics):
 
     assert isinstance(result, ParsedOTLP)
     assert len(result.resources) == 1
-    assert len(result.datasources) == 1
+    assert len(result.scopes) == 1
     assert len(result.metric_definitions) == 1
     assert len(result.metric_data) == 1
 
@@ -270,10 +270,10 @@ def test_parse_otlp_with_sample_data(sample_otlp_cpu_metrics):
     assert resource.attributes["service.name"] == "web-server"
     assert resource.attributes["host.name"] == "server01"
 
-    # Check datasource
-    datasource = result.datasources[0]
-    assert datasource.name == "CPU_Usage"
-    assert datasource.version == "1.0"
+    # Check scope
+    scope = result.scopes[0]
+    assert scope.name == "CPU_Usage"
+    assert scope.version == "1.0"
 
     # Check metric definition
     metric_def = result.metric_definitions[0]
@@ -292,7 +292,7 @@ def test_parse_otlp_with_memory_metrics(sample_otlp_memory_metrics):
     result = parse_otlp(sample_otlp_memory_metrics)
 
     assert len(result.resources) == 1
-    assert len(result.datasources) == 1
+    assert len(result.scopes) == 1
     assert len(result.metric_definitions) == 1
     assert len(result.metric_data) == 1
 
@@ -313,8 +313,8 @@ def test_parse_otlp_with_multi_metric(sample_otlp_multi_metric):
     # Should have 2 resources
     assert len(result.resources) == 2
 
-    # Should have multiple datasources
-    assert len(result.datasources) >= 2
+    # Should have multiple scopes
+    assert len(result.scopes) >= 2
 
     # Should have multiple metric definitions
     assert len(result.metric_definitions) >= 3
@@ -347,7 +347,7 @@ def test_parse_otlp_to_dict(sample_otlp_cpu_metrics):
     result_dict = result.to_dict()
 
     assert "resources" in result_dict
-    assert "datasources" in result_dict
+    assert "scopes" in result_dict
     assert "metric_definitions" in result_dict
     assert "metric_data" in result_dict
 
@@ -371,16 +371,16 @@ def test_deduplicate_resources():
     assert unique[1].resource_hash == "hash2"
 
 
-def test_deduplicate_datasources():
-    """Test deduplicating datasources by name and version."""
-    datasources = [
-        DatasourceData("CPU_Usage", "1.0"),
-        DatasourceData("CPU_Usage", "1.0"),  # Duplicate
-        DatasourceData("CPU_Usage", "2.0"),  # Different version
-        DatasourceData("Memory", "1.0"),
+def test_deduplicate_scopes():
+    """Test deduplicating scopes by name and version."""
+    scopes = [
+        ScopeData("CPU_Usage", "1.0"),
+        ScopeData("CPU_Usage", "1.0"),  # Duplicate
+        ScopeData("CPU_Usage", "2.0"),  # Different version
+        ScopeData("Memory", "1.0"),
     ]
 
-    unique = deduplicate_datasources(datasources)
+    unique = deduplicate_scopes(scopes)
 
     assert len(unique) == 3
     # Should have: CPU_Usage v1.0, CPU_Usage v2.0, Memory v1.0
@@ -409,7 +409,7 @@ def test_parse_otlp_from_file(sample_otlp_data):
     result = parse_otlp(sample_otlp_data)
 
     assert len(result.resources) > 0
-    assert len(result.datasources) > 0
+    assert len(result.scopes) > 0
     assert len(result.metric_definitions) > 0
     assert len(result.metric_data) > 0
 
@@ -507,13 +507,13 @@ def test_multiple_scope_metrics_per_resource():
         ],
     }
 
-    _resource, datasources, metric_defs, data_points = parse_resource_metrics(resource_metrics)
+    _resource, scopes, metric_defs, data_points = parse_resource_metrics(resource_metrics)
 
-    assert len(datasources) == 2
+    assert len(scopes) == 2
     assert len(metric_defs) == 2
     assert len(data_points) == 2
 
-    # Verify both datasources
-    ds_names = [ds.name for ds in datasources]
+    # Verify both scopes
+    ds_names = [ds.name for ds in scopes]
     assert "CPU" in ds_names
     assert "Memory" in ds_names
